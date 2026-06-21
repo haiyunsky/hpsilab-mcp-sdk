@@ -6,13 +6,16 @@ Connect Claude, Codex, and AI agents directly to:
 
 https://hpsilab.com/mcp
 
-Features:
+Current tools:
 
-* AI Predictions
-* IV Radar
-* Option Pressure
-* Monte Carlo Simulation
-* Equity Curves
+* `analyze_stock` ⭐
+* `get_ai_prediction`
+* `get_iv_radar`
+* `get_option_pressure`
+* `get_monte_carlo`
+* `get_equity_curves`
+* `generate_stock_images`
+* `generate_stock_research_report`
 
 ## Project Overview
 
@@ -81,6 +84,21 @@ result = client.get_iv_radar("TSLA")
 
 print(result)
 ```
+
+## Example Workflow
+
+```python
+result = client.analyze_stock("NVDA")
+```
+
+Returns:
+
+* AI Prediction
+* IV Analysis
+* Option Pressure
+* Monte Carlo Simulation
+* Direction Score
+* Summary
 
 ## Authenticated Usage
 
@@ -160,18 +178,16 @@ See `examples/codex.md`.
 
 See `examples/openai-agents.md`.
 
-## Available Tools
+## Tools
 
-Tool names may vary by deployment, but the public MCP surface is expected to include:
-
-* `analyze_stock`: Aggregate stock research signal and summary data.
-* `generate_stock_images`: Generate stock-report chart images.
-* `generate_stock_research_report`: Generate a markdown research report with chart embeds.
-* `get_ai_prediction`: Retrieve an AI-powered next-day directional prediction summary.
+* `analyze_stock` ⭐: Aggregate AI prediction, IV analysis, option pressure, Monte Carlo simulation, direction score, and summary.
+* `get_ai_prediction`: Retrieve an AI-powered next-day directional prediction.
+* `get_iv_radar`: Retrieve implied-volatility structure, skew, and volatility regime.
+* `get_option_pressure`: Retrieve option-chain pressure levels such as max pain, gamma wall, and squeeze zone.
+* `get_monte_carlo`: Retrieve a short-horizon Monte Carlo simulation.
 * `get_equity_curves`: Retrieve equity curve and backtest performance metrics.
-* `get_iv_radar`: Retrieve implied-volatility structure and option sentiment context.
-* `get_monte_carlo`: Retrieve a short-horizon Monte Carlo simulation summary.
-* `get_option_pressure`: Retrieve option-chain pressure levels such as max pain and gamma context.
+* `generate_stock_images`: Generate stock-report chart images.
+* `generate_stock_research_report`: Generate a markdown stock research report.
 
 These tools return research-oriented information. They are not financial advice.
 
