@@ -22,10 +22,18 @@ This repository contains open-source SDK skeletons and examples for connecting M
 
 This repository includes:
 
-* Python SDK skeleton in `python/client.py`
+* Python SDK package: `pip install hpsilab-mcp`
 * TypeScript SDK skeleton in `typescript/client.ts`
 * Client setup examples in `examples/`
 * Documentation for available MCP tools and prompt patterns
+
+## Installation
+
+Install from PyPI:
+
+```bash
+pip install hpsilab-mcp
+```
 
 ## Hosted MCP Endpoint
 
@@ -65,19 +73,31 @@ Do not place secrets directly in this repository. Use your MCP client's supporte
 ### Python
 
 ```python
-from client import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient
 
-client = HpsiMcpClient(server_url="https://hpsilab.com/mcp")
+client = HpsiMcpClient()
 
-analysis = client.call_tool(
-    "analyze_stock",
-    {"symbol": "NVDA"},
-)
+result = client.get_iv_radar("TSLA")
 
-print(analysis)
+print(result)
 ```
 
-### TypeScript
+## Authenticated Usage
+
+```python
+from hpsilab_mcp import HpsiMcpClient
+
+client = HpsiMcpClient(
+    api_key="hpsi_*******",
+    base_url="https://hpsilab.com",
+)
+
+result = client.get_ai_prediction("TSLA")
+
+print(result)
+```
+
+## TypeScript
 
 ```ts
 import { HpsiMcpClient } from "./client";
@@ -131,6 +151,14 @@ Example:
 Restart Claude Desktop after changing the MCP configuration. Once connected, Claude should be able to discover the H|ψ⟩ Quantum Finance MCP tools.
 
 See `examples/claude-desktop.md` for a fuller setup template.
+
+## Codex Setup
+
+See `examples/codex.md`.
+
+## OpenAI Agents Setup
+
+See `examples/openai-agents.md`.
 
 ## Available Tools
 
