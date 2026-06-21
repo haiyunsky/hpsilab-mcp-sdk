@@ -1,104 +1,35 @@
-# H|ψ⟩ Quantum Finance MCP SDK
+# HPSI Python REST SDK
 
-AI-powered quantitative finance tools via MCP.
+The `hpsilab-mcp` Python package currently wraps the hosted hpsilab.com REST API.
 
-Connect Claude, Codex, and AI agents directly to:
-
-https://hpsilab.com/mcp
-
-Current tools:
-
-* `analyze_stock` ⭐
-* `get_ai_prediction`
-* `get_iv_radar`
-* `get_option_pressure`
-* `get_monte_carlo`
-* `get_equity_curves`
-* `generate_stock_images`
-* `generate_stock_research_report`
-
-## Project Overview
-
-H|ψ⟩ Quantum Finance MCP provides AI-powered quantitative finance tools through a hosted MCP endpoint. Client applications can use MCP to request structured stock analysis, AI prediction summaries, implied-volatility context, option pressure levels, Monte Carlo simulation ranges, equity curve metrics, and report assets.
-
-This repository contains open-source SDK skeletons and examples for connecting MCP-compatible clients to the hosted H|ψ⟩ Quantum Finance MCP service.
-
-This repository includes:
-
-* Python SDK package: `pip install hpsilab-mcp`
-* TypeScript SDK skeleton in `typescript/client.ts`
-* Client setup examples in `examples/`
-* Documentation for available MCP tools and prompt patterns
+The Python SDK currently wraps the hosted REST API. Some MCP-only tools are not yet available through REST endpoints.
 
 ## Installation
-
-Install from PyPI:
 
 ```bash
 pip install hpsilab-mcp
 ```
 
-## Hosted MCP Endpoint
-
-H|ψ⟩ Quantum Finance provides a hosted MCP endpoint:
-
-https://hpsilab.com/mcp
-
-No self-hosting required.
-
-Connect directly from Claude Desktop, Codex, or other MCP-compatible clients.
-
-## Quick Example
-
-Once connected, ask:
-
-* Analyze NVDA
-* Predict IONQ
-* Show IV Radar for QBTS
-* Compare SOUN vs PLTR
-
-## Setup
-
-Configure your MCP-compatible client to connect to the hosted endpoint:
-
-https://hpsilab.com/mcp
-
-Typical MCP client configuration requires:
-
-* The hosted MCP endpoint URL
-* Any required client-side authentication configured outside this repository
-* A client that supports MCP tool calls
-
-Do not place secrets directly in this repository. Use your MCP client's supported secret or environment configuration mechanism.
-
 ## Quick Start
-
-### Python
 
 ```python
 from hpsilab_mcp import HpsiMcpClient
 
 client = HpsiMcpClient()
 
-result = client.get_iv_radar("TSLA")
+calls = {
+    "analyze_stock": client.analyze_stock("NVDA"),
+    "get_ai_prediction": client.get_ai_prediction("NVDA"),
+    "get_iv_radar": client.get_iv_radar("NVDA"),
+    "get_option_pressure": client.get_option_pressure("NVDA"),
+    "get_monte_carlo": client.get_monte_carlo("NVDA"),
+    "get_equity_curves": client.get_equity_curves("NVDA"),
+    "generate_stock_images": client.generate_stock_images("NVDA"),
+    "generate_stock_research_report": client.generate_stock_research_report("NVDA"),
+}
 
-print(result)
+print(calls["analyze_stock"])
 ```
-
-## Example Workflow
-
-```python
-result = client.analyze_stock("NVDA")
-```
-
-Returns:
-
-* AI Prediction
-* IV Analysis
-* Option Pressure
-* Monte Carlo Simulation
-* Direction Score
-* Summary
 
 ## Authenticated Usage
 
@@ -106,7 +37,7 @@ Returns:
 from hpsilab_mcp import HpsiMcpClient
 
 client = HpsiMcpClient(
-    api_key="hpsi_*******",
+    api_key="YOUR_API_KEY",
     base_url="https://hpsilab.com",
 )
 
@@ -115,99 +46,57 @@ result = client.get_ai_prediction("TSLA")
 print(result)
 ```
 
-## TypeScript
+## REST SDK Methods
 
-```ts
-import { HpsiMcpClient } from "./client";
-
-const client = new HpsiMcpClient({
-  serverUrl: "https://hpsilab.com/mcp",
-});
-
-const analysis = await client.callTool("analyze_stock", {
-  symbol: "NVDA",
-});
-
-console.log(analysis);
+```python
+client.get_ai_prediction("NVDA")
+client.analyze_stock("NVDA")
+client.get_iv_radar("NVDA")
+client.get_option_pressure("NVDA")
+client.get_monte_carlo("NVDA")
+client.get_equity_curve("NVDA")
+client.get_equity_curves("NVDA")
+client.generate_stock_images("NVDA")
+client.generate_stock_research_report("NVDA")
 ```
 
-The SDK files are skeletons. Adapt transport, authentication, retries, and response validation to your runtime and MCP client stack.
+Endpoint mapping:
 
-## MCP Setup
+| Method | Endpoint |
+| --- | --- |
+| `analyze_stock(symbol)` | `GET /api/analyze_stock/{symbol}` |
+| `get_ai_prediction(symbol)` | `GET /api/ai_prediction/{symbol}` |
+| `get_iv_radar(symbol)` | `GET /api/iv_batch?symbols={symbol}` |
+| `get_option_pressure(symbol)` | `GET /api/option_pressure/{symbol}` |
+| `get_monte_carlo(symbol)` | `GET /api/monte_carlo/{symbol}` |
+| `get_equity_curve(symbol)` | `GET /api/equity_curve/{symbol}` |
+| `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` |
+| `generate_stock_images(symbol)` | `POST /api/stock_report/{symbol}/images` |
+| `generate_stock_research_report(symbol)` | `POST /api/stock_report/{symbol}/research_report` |
 
-An MCP client registers the hosted H|ψ⟩ endpoint under a named server entry, then exposes its tools to the assistant.
+## Capability Matrix
 
-Example endpoint:
+| Capability | REST API | MCP |
+| --- | --- | --- |
+| `analyze_stock` | Yes | Yes |
+| `get_ai_prediction` | Yes | Yes |
+| `get_iv_radar` | Yes | Yes |
+| `get_option_pressure` | Yes | Yes |
+| `get_monte_carlo` | Yes | Yes |
+| `get_equity_curve` | Yes | No |
+| `get_equity_curves` | Yes | Yes |
+| `generate_stock_images` | Yes | Yes |
+| `generate_stock_research_report` | Yes | Yes |
 
-```text
-https://hpsilab.com/mcp
-```
+## MCP Transport
 
-Use your MCP client's supported remote-server configuration. Avoid committing credentials or local secrets.
+All official MCP tools now have REST SDK coverage. Use an MCP-compatible client when you specifically need MCP transport, tool discovery, or assistant-native tool calls.
 
-## Claude Desktop Setup
+## Scope
 
-Add the hosted endpoint to your Claude Desktop MCP configuration file.
-
-Example:
-
-```json
-{
-  "mcpServers": {
-    "hpsilab": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://hpsilab.com/mcp"
-      ]
-    }
-  }
-}
-```
-
-Restart Claude Desktop after changing the MCP configuration. Once connected, Claude should be able to discover the H|ψ⟩ Quantum Finance MCP tools.
-
-See `examples/claude-desktop.md` for a fuller setup template.
-
-## Codex Setup
-
-See `examples/codex.md`.
-
-## OpenAI Agents Setup
-
-See `examples/openai-agents.md`.
-
-## Tools
-
-* `analyze_stock` ⭐: Aggregate AI prediction, IV analysis, option pressure, Monte Carlo simulation, direction score, and summary.
-* `get_ai_prediction`: Retrieve an AI-powered next-day directional prediction.
-* `get_iv_radar`: Retrieve implied-volatility structure, skew, and volatility regime.
-* `get_option_pressure`: Retrieve option-chain pressure levels such as max pain, gamma wall, and squeeze zone.
-* `get_monte_carlo`: Retrieve a short-horizon Monte Carlo simulation.
-* `get_equity_curves`: Retrieve equity curve and backtest performance metrics.
-* `generate_stock_images`: Generate stock-report chart images.
-* `generate_stock_research_report`: Generate a markdown stock research report.
+This package is a REST API wrapper. It does not implement MCP transport, SSE, streaming, tool discovery, Claude integration, or proprietary finance logic.
 
 These tools return research-oriented information. They are not financial advice.
-
-## Example Prompts
-
-* "Analyze NVDA using the H|ψ⟩ Quantum Finance MCP tools and summarize the bullish and bearish factors."
-* "Generate a stock research report for AAPL with charts."
-* "Check IV Radar and Option Pressure for SPY."
-* "Compare the Monte Carlo Simulation outlook and AI Prediction for TSLA."
-* "Show the recent Equity Curves metrics for my watchlist."
-
-## Repository Scope
-
-This repository is for open-source client examples only. It deliberately excludes:
-
-* Proprietary algorithms
-* Internal model weights or prompts
-* Trading strategy implementation details
-* Server-side business logic
-* Secrets, credentials, or private deployment configuration
 
 ## License
 

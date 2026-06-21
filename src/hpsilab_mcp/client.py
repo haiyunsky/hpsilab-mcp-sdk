@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import TracebackType
-from typing import Any, Mapping, Optional, Type
+from typing import Any, Mapping, Optional, Sequence, Type
 from urllib.parse import quote
 
 import httpx
@@ -61,6 +61,12 @@ class HpsiMcpClient:
     def get_ai_prediction(self, symbol: str) -> Any:
         return self._get(f"/api/ai_prediction/{self._path_symbol(symbol)}")
 
+    def analyze_stock(self, symbol: str, refresh: bool = False) -> Any:
+        return self._get(
+            f"/api/analyze_stock/{self._path_symbol(symbol)}",
+            params=self._query_params(refresh=refresh),
+        )
+
     def get_iv_radar(self, symbol: str) -> Any:
         return self._get("/api/iv_batch", params={"symbols": self._clean_symbol(symbol)})
 
@@ -76,6 +82,28 @@ class HpsiMcpClient:
     def get_monte_carlo(self, symbol: str) -> Any:
         return self._get(f"/api/monte_carlo/{self._path_symbol(symbol)}")
 
+    def generate_stock_images(
+        self,
+        symbol: str,
+        force: bool = False,
+        types: Optional[Sequence[str]] = None,
+    ) -> Any:
+        return self._post(
+            f"/api/stock_report/{self._path_symbol(symbol)}/images",
+            params=self._query_params(force=force, types=self._join_types(types)),
+        )
+
+    def generate_stock_research_report(
+        self,
+        symbol: str,
+        refresh: bool = False,
+        force_images: bool = False,
+    ) -> Any:
+        return self._post(
+            f"/api/stock_report/{self._path_symbol(symbol)}/research_report",
+            params=self._query_params(refresh=refresh, force_images=force_images),
+        )
+
     def _get(
         self,
         path: str,
@@ -83,6 +111,21 @@ class HpsiMcpClient:
     ) -> Any:
         try:
             response = self._client.get(path, params=params)
+        except httpx.TimeoutException as exc:
+            raise HpsiMcpTimeoutError("Request timed out.") from exc
+        except httpx.RequestError as exc:
+            raise HpsiMcpConnectionError("Request failed before a response was received.") from exc
+
+        self._raise_for_status(response)
+        return self._decode_json(response)
+
+    def _post(
+        self,
+        path: str,
+        params: Optional[Mapping[str, str]] = None,
+    ) -> Any:
+        try:
+            response = self._client.post(path, params=params)
         except httpx.TimeoutException as exc:
             raise HpsiMcpTimeoutError("Request timed out.") from exc
         except httpx.RequestError as exc:
@@ -146,3 +189,20 @@ class HpsiMcpClient:
         if not cleaned:
             raise ValueError("Symbol is required.")
         return cleaned
+
+    def _join_types(self, types: Optional[Sequence[str]]) -> Optional[str]:
+        if types is None:
+            return None
+        cleaned = [item.strip() for item in types if item.strip()]
+        return ",".join(cleaned) if cleaned else None
+
+    def _query_params(self, **values: object) -> dict[str, str]:
+        params: dict[str, str] = {}
+        for key, value in values.items():
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                params[key] = "true" if value else "false"
+            else:
+                params[key] = str(value)
+        return params

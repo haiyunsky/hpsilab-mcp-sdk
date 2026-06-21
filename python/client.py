@@ -56,6 +56,18 @@ class HpsiMcpClient:
 
     def get_monte_carlo(self, symbol: str) -> Any:
         return self.call_tool("get_monte_carlo", {"symbol": symbol})
+    
+    def analyze_stock(self, symbol: str) -> Any:
+        return self.call_tool("analyze_stock", {"symbol": symbol})
+
+    def generate_stock_images(self, symbol: str) -> Any:
+        return self.call_tool("generate_stock_images", {"symbol": symbol})
+
+    def generate_stock_research_report(self, symbol: str) -> Any:
+        return self.call_tool(
+            "generate_stock_research_report",
+            {"symbol": symbol},
+        )
 
     def _request(self, payload: Mapping[str, Any]) -> Any:
         """Send a request through your MCP transport.
