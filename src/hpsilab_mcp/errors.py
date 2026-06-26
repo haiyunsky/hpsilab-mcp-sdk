@@ -36,6 +36,10 @@ class HpsiMcpAuthError(HpsiMcpAPIError):
     """Raised when the API rejects authentication or authorization."""
 
 
+class HpsiMcpPaymentError(HpsiMcpAPIError):
+    """Raised when a Pro-tier tool is called without a paid plan (HTTP 402)."""
+
+
 class HpsiMcpRateLimitError(HpsiMcpAPIError):
     """Raised when the API returns a rate-limit response."""
 

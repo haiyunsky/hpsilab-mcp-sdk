@@ -12,6 +12,7 @@ from .errors import (
     HpsiMcpAPIError,
     HpsiMcpAuthError,
     HpsiMcpConnectionError,
+    HpsiMcpPaymentError,
     HpsiMcpRateLimitError,
     HpsiMcpResponseError,
     HpsiMcpTimeoutError,
@@ -19,6 +20,25 @@ from .errors import (
 
 
 DEFAULT_BASE_URL = "https://hpsilab.com"
+
+# Tool tiers — the single source of truth lives in the backend (HTTP 402), but
+# the SDK mirrors the catalog so Pro tools fail fast client-side with a clear
+# message instead of a wasted round-trip. Free + freemium tools work without an
+# API key (anonymous read-only); Pro tools require a paid `hpsi_…` key.
+PRO_TOOLS = frozenset(
+    {
+        "get_ai_prediction",
+        "get_equity_curve",
+        "get_equity_curves",
+        "generate_stock_images",
+        "generate_stock_research_report",
+    }
+)
+
+# Header that opts an un-keyed caller into the backend's anonymous read-only
+# free-trial path (free + freemium tools). Must match the backend's
+# MCP_ANONYMOUS_READONLY_HEADER.
+ANONYMOUS_READONLY_HEADER = "x-mcp-anonymous-readonly"
 
 
 class HpsiMcpClient:
@@ -35,7 +55,12 @@ class HpsiMcpClient:
         request_headers = dict(headers or {})
         if api_key:
             request_headers["Authorization"] = f"Bearer {api_key}"
+        else:
+            # No key → anonymous free-trial tier. Opt into the backend's
+            # read-only path so free/freemium tools work without an account.
+            request_headers.setdefault(ANONYMOUS_READONLY_HEADER, "1")
 
+        self._api_key = api_key
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -58,7 +83,17 @@ class HpsiMcpClient:
     ) -> None:
         self.close()
 
+    def _guard_pro(self, tool: str) -> None:
+        """Fail fast (no network call) when a Pro tool is used without a key."""
+        if tool in PRO_TOOLS and not self._api_key:
+            raise HpsiMcpPaymentError(
+                f"{tool} is a Pro tool. Set api_key with a paid plan — "
+                "upgrade at hpsilab.com/pricing.",
+                status_code=402,
+            )
+
     def get_ai_prediction(self, symbol: str) -> Any:
+        self._guard_pro("get_ai_prediction")
         return self._get(f"/api/ai_prediction/{self._path_symbol(symbol)}")
 
     def analyze_stock(self, symbol: str, refresh: bool = False) -> Any:
@@ -74,6 +109,7 @@ class HpsiMcpClient:
         return self._get(f"/api/option_pressure/{self._path_symbol(symbol)}")
 
     def get_equity_curve(self, symbol: str) -> Any:
+        self._guard_pro("get_equity_curve")
         return self._get(f"/api/equity_curve/{self._path_symbol(symbol)}")
 
     def get_equity_curves(self, symbol: str) -> Any:
@@ -88,6 +124,7 @@ class HpsiMcpClient:
         force: bool = False,
         types: Optional[Sequence[str]] = None,
     ) -> Any:
+        self._guard_pro("generate_stock_images")
         return self._post(
             f"/api/stock_report/{self._path_symbol(symbol)}/images",
             params=self._query_params(force=force, types=self._join_types(types)),
@@ -99,6 +136,7 @@ class HpsiMcpClient:
         refresh: bool = False,
         force_images: bool = False,
     ) -> Any:
+        self._guard_pro("generate_stock_research_report")
         return self._post(
             f"/api/stock_report/{self._path_symbol(symbol)}/research_report",
             params=self._query_params(refresh=refresh, force_images=force_images),
@@ -141,6 +179,12 @@ class HpsiMcpClient:
         message = self._error_message(response)
         if response.status_code in {401, 403}:
             raise HpsiMcpAuthError(
+                message,
+                status_code=response.status_code,
+                response_text=response.text,
+            )
+        if response.status_code == 402:
+            raise HpsiMcpPaymentError(
                 message,
                 status_code=response.status_code,
                 response_text=response.text,
