@@ -1,8 +1,12 @@
 # HPSI Python REST SDK
 
-The `hpsilab-mcp` Python package currently wraps the hosted hpsilab.com REST API.
+`hpsilab-mcp` is the official Python SDK for the hosted hpsilab.com REST API — quantitative finance and options analytics (IV surface, Monte Carlo simulation, AI predictions, pre-trade risk scans, and more).
 
-The Python SDK currently wraps hosted REST endpoints for the official tool catalog.
+> **Note:** This package wraps REST endpoints only. It does not implement MCP transport — see [MCP Transport](#mcp-transport) below if you need that.
+
+## Requirements
+
+- Python >= 3.9
 
 ## Installation
 
@@ -32,18 +36,10 @@ calls = {
 print(calls["analyze_stock"])
 ```
 
-All listed REST SDK methods are callable without an API key. The SDK does not
-block any method client-side.
+## Authentication
 
-## Version
-
-```python
-import hpsilab_mcp
-
-print(hpsilab_mcp.__version__)
-```
-
-## Optional Authenticated Usage
+<!-- TODO(Haiyun): confirm current tiering before publishing — see note below -->
+All listed REST SDK methods are callable without an API key. The SDK does not block any method client-side; any access restrictions are enforced server-side.
 
 ```python
 from hpsilab_mcp import HpsiMcpClient
@@ -54,26 +50,20 @@ client = HpsiMcpClient(
 )
 
 result = client.get_ai_prediction("TSLA")
-
 print(result)
 ```
 
-## REST SDK Methods
+Pass an `api_key` to raise rate limits or unlock account-specific features, where applicable.
+
+## Version
 
 ```python
-client.get_ai_prediction("NVDA")
-client.analyze_stock("NVDA")
-client.get_iv_radar("NVDA")
-client.get_option_pressure("NVDA")
-client.get_pretrade_risk_scan("NVDA")
-client.get_monte_carlo("NVDA")
-client.get_equity_curve("NVDA")
-client.get_equity_curves("NVDA")
-client.generate_stock_images("NVDA")
-client.generate_stock_research_report("NVDA")
+import hpsilab_mcp
+
+print(hpsilab_mcp.__version__)
 ```
 
-Endpoint mapping:
+## REST SDK Methods
 
 | Method | Endpoint |
 | --- | --- |
@@ -84,7 +74,7 @@ Endpoint mapping:
 | `get_pretrade_risk_scan(symbol)` | `GET /api/pretrade-risk-scan?symbol={symbol}` |
 | `get_monte_carlo(symbol)` | `GET /api/monte_carlo/{symbol}` |
 | `get_equity_curve(symbol)` | `GET /api/equity_curve/{symbol}` |
-| `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` |
+| `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` (alias of `get_equity_curve`) |
 | `generate_stock_images(symbol)` | `POST /api/stock_report/{symbol}/images` |
 | `generate_stock_research_report(symbol)` | `POST /api/stock_report/{symbol}/research_report` |
 
@@ -105,13 +95,19 @@ Endpoint mapping:
 
 ## MCP Transport
 
-All official MCP tools now have REST SDK coverage. Use an MCP-compatible client when you specifically need MCP transport, tool discovery, or assistant-native tool calls.
+All official MCP tools have REST SDK coverage. Use an MCP-compatible client (e.g. Claude, or any MCP host) when you specifically need MCP transport, tool discovery, or assistant-native tool calls — see the [MCP server docs](https://hpsilab.com/developer/v2) for setup.
 
 ## Scope
 
-This package is a REST API wrapper. It does not implement MCP transport, SSE, streaming, tool discovery, Claude integration, or proprietary finance logic.
+This package is a REST API wrapper only. It does not implement MCP transport, SSE, streaming, tool discovery, Claude integration, or proprietary finance logic.
 
-These tools return research-oriented information. They are not financial advice.
+These tools return research-oriented information. **They are not financial advice.**
+
+## Links
+
+- [Homepage](https://hpsilab.com)
+- [Developer Portal](https://hpsilab.com/developer/v2)
+- [Repository](https://github.com/haiyunsky/hpsilab-mcp-sdk)
 
 ## License
 

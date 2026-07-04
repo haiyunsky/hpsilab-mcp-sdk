@@ -1,7 +1,7 @@
 [project]
 name = "hpsilab-mcp"
-version = "0.5.0"
-description = "Python SDK for H|psi Quantum Finance APIs."
+version = "0.5.1"
+description = "Python SDK for the HPSILab quantitative finance API — options analytics, IV surface modeling, Monte Carlo simulation, and AI-driven predictions, with native MCP support."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -11,11 +11,32 @@ authors = [
 ]
 
 keywords = [
-  "finance",
-  "quantitative-finance",
-  "mcp",
-  "sdk",
-  "options"
+    "quantitative-finance",
+    "quant-finance",
+    "options",
+    "options-analytics",
+    "mcp",
+    "model-context-protocol",
+    "implied-volatility",
+    "monte-carlo",
+    "black-scholes",
+    "trading",
+    "stock-analytics",
+    "sdk",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Developers",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
 ]
 
 dependencies = [
