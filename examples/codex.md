@@ -30,6 +30,7 @@ Example prompts:
 - Compare SOUN vs PLTR
 - Generate a stock research report for MSFT
 - Check Option Pressure for SPY
+- Run a pretrade risk scan for NVDA
 - Compare Monte Carlo Simulation and AI Prediction for QBTS
 - Show Equity Curves for IONQ
 

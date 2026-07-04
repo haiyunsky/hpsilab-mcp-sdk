@@ -3,7 +3,7 @@
 The `hpsilab-mcp` package provides a lightweight synchronous REST API wrapper
 for the hosted hpsilab.com REST API.
 
-The Python SDK currently wraps the hosted REST API. Some MCP-only tools are not yet available through REST endpoints.
+The Python SDK currently wraps hosted REST endpoints for the official tool catalog.
 
 Hosted base URL:
 
@@ -25,7 +25,11 @@ from hpsilab_mcp import HpsiMcpClient
 client = HpsiMcpClient()
 ```
 
-Optional API key support is available for future paid plans:
+All listed REST SDK methods are callable without an API key. The SDK does not
+block any method client-side.
+
+Optional API key support is available when you want to send an Authorization
+header:
 
 ```python
 client = HpsiMcpClient(api_key="YOUR_API_KEY")
@@ -40,6 +44,7 @@ client.analyze_stock("NVDA")
 client.get_ai_prediction("NVDA")
 client.get_iv_radar("NVDA")
 client.get_option_pressure("SPY")
+client.get_pretrade_risk_scan("NVDA")
 client.get_monte_carlo("QBTS")
 client.get_equity_curve("IONQ")
 client.get_equity_curves("IONQ")
@@ -55,6 +60,7 @@ Endpoint mapping:
 | `get_ai_prediction(symbol)` | `GET /api/ai_prediction/{symbol}` |
 | `get_iv_radar(symbol)` | `GET /api/iv_batch?symbols={symbol}` |
 | `get_option_pressure(symbol)` | `GET /api/option_pressure/{symbol}` |
+| `get_pretrade_risk_scan(symbol)` | `GET /api/pretrade-risk-scan?symbol={symbol}` |
 | `get_monte_carlo(symbol)` | `GET /api/monte_carlo/{symbol}` |
 | `get_equity_curve(symbol)` | `GET /api/equity_curve/{symbol}` |
 | `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` |
@@ -72,6 +78,7 @@ for `get_equity_curves(symbol)`.
 | `get_ai_prediction` | Yes | Yes |
 | `get_iv_radar` | Yes | Yes |
 | `get_option_pressure` | Yes | Yes |
+| `get_pretrade_risk_scan` | Yes | Yes |
 | `get_monte_carlo` | Yes | Yes |
 | `get_equity_curve` | Yes | No |
 | `get_equity_curves` | Yes | Yes |

@@ -16,6 +16,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             "get_ai_prediction",
             "get_iv_radar",
             "get_option_pressure",
+            "get_pretrade_risk_scan",
             "get_monte_carlo",
             "get_equity_curve",
             "get_equity_curves",
@@ -61,6 +62,21 @@ class HpsiMcpClientTests(unittest.TestCase):
         client = HpsiMcpClient(transport=httpx.MockTransport(handler))
 
         self.assertEqual(client.get_iv_radar("QBTS"), {"symbols": ["QBTS"]})
+        client.close()
+
+    def test_get_pretrade_risk_scan_uses_symbol_query_param(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.method, "GET")
+            self.assertEqual(request.url.path, "/api/pretrade-risk-scan")
+            self.assertEqual(request.url.params["symbol"], "NVDA")
+            return httpx.Response(200, json={"symbol": "NVDA", "risk": "low"})
+
+        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+
+        self.assertEqual(
+            client.get_pretrade_risk_scan(" NVDA "),
+            {"symbol": "NVDA", "risk": "low"},
+        )
         client.close()
 
     def test_generate_stock_images_uses_real_backend_route(self) -> None:

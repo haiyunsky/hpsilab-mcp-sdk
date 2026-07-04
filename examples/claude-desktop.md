@@ -30,5 +30,6 @@ Example prompts:
 - "Use H|ψ⟩ Quantum Finance MCP to analyze NVDA."
 - "Generate a research report for AAPL."
 - "Check IV radar and option pressure for SPY."
+- "Run a pretrade risk scan for NVDA."
 
 Do not store secrets directly in this repository or in shared configuration snippets.

@@ -51,6 +51,9 @@ class HpsiMcpClient:
     def get_option_pressure(self, symbol: str) -> Any:
         return self.call_tool("get_option_pressure", {"symbol": symbol})
 
+    def get_pretrade_risk_scan(self, symbol: str) -> Any:
+        return self.call_tool("get_pretrade_risk_scan", {"symbol": symbol})
+
     def get_equity_curves(self, symbol: str) -> Any:
         return self.call_tool("get_equity_curves", {"symbol": symbol})
 

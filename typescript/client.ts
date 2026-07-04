@@ -61,6 +61,12 @@ export class HpsiMcpClient {
     return this.callTool("get_option_pressure", { symbol });
   }
 
+  async getPretradeRiskScan<TResult = unknown>(
+    symbol: string,
+  ): Promise<TResult> {
+    return this.callTool("get_pretrade_risk_scan", { symbol });
+  }
+
   async getEquityCurves<TResult = unknown>(symbol: string): Promise<TResult> {
     return this.callTool("get_equity_curves", { symbol });
   }

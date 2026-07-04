@@ -2,7 +2,7 @@
 
 The `hpsilab-mcp` Python package currently wraps the hosted hpsilab.com REST API.
 
-The Python SDK currently wraps the hosted REST API. Some MCP-only tools are not yet available through REST endpoints.
+The Python SDK currently wraps hosted REST endpoints for the official tool catalog.
 
 ## Installation
 
@@ -22,6 +22,7 @@ calls = {
     "get_ai_prediction": client.get_ai_prediction("NVDA"),
     "get_iv_radar": client.get_iv_radar("NVDA"),
     "get_option_pressure": client.get_option_pressure("NVDA"),
+    "get_pretrade_risk_scan": client.get_pretrade_risk_scan("NVDA"),
     "get_monte_carlo": client.get_monte_carlo("NVDA"),
     "get_equity_curves": client.get_equity_curves("NVDA"),
     "generate_stock_images": client.generate_stock_images("NVDA"),
@@ -31,7 +32,18 @@ calls = {
 print(calls["analyze_stock"])
 ```
 
-## Authenticated Usage
+All listed REST SDK methods are callable without an API key. The SDK does not
+block any method client-side.
+
+## Version
+
+```python
+import hpsilab_mcp
+
+print(hpsilab_mcp.__version__)
+```
+
+## Optional Authenticated Usage
 
 ```python
 from hpsilab_mcp import HpsiMcpClient
@@ -53,6 +65,7 @@ client.get_ai_prediction("NVDA")
 client.analyze_stock("NVDA")
 client.get_iv_radar("NVDA")
 client.get_option_pressure("NVDA")
+client.get_pretrade_risk_scan("NVDA")
 client.get_monte_carlo("NVDA")
 client.get_equity_curve("NVDA")
 client.get_equity_curves("NVDA")
@@ -68,6 +81,7 @@ Endpoint mapping:
 | `get_ai_prediction(symbol)` | `GET /api/ai_prediction/{symbol}` |
 | `get_iv_radar(symbol)` | `GET /api/iv_batch?symbols={symbol}` |
 | `get_option_pressure(symbol)` | `GET /api/option_pressure/{symbol}` |
+| `get_pretrade_risk_scan(symbol)` | `GET /api/pretrade-risk-scan?symbol={symbol}` |
 | `get_monte_carlo(symbol)` | `GET /api/monte_carlo/{symbol}` |
 | `get_equity_curve(symbol)` | `GET /api/equity_curve/{symbol}` |
 | `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` |
@@ -82,6 +96,7 @@ Endpoint mapping:
 | `get_ai_prediction` | Yes | Yes |
 | `get_iv_radar` | Yes | Yes |
 | `get_option_pressure` | Yes | Yes |
+| `get_pretrade_risk_scan` | Yes | Yes |
 | `get_monte_carlo` | Yes | Yes |
 | `get_equity_curve` | Yes | No |
 | `get_equity_curves` | Yes | Yes |
