@@ -67,6 +67,11 @@ Endpoint mapping:
 | `generate_stock_images(symbol)` | `POST /api/stock_report/{symbol}/images` |
 | `generate_stock_research_report(symbol)` | `POST /api/stock_report/{symbol}/research_report` |
 
+MCP behavior annotations belong to the MCP server and are not emitted by this
+REST SDK. The `GET` methods are read-only. The two `generate_*` methods create
+or refresh hosted artifacts and may consume quota or trigger payment; callers
+should not assume repeated requests are idempotent.
+
 `get_equity_curve(symbol)` remains available as a backwards-compatible alias
 for `get_equity_curves(symbol)`.
 

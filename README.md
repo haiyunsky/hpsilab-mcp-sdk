@@ -1,4 +1,4 @@
-# HPSI Python REST SDK
+# HPSILab Python REST SDK
 
 `hpsilab-mcp` is the official Python SDK for the hosted hpsilab.com REST API — quantitative finance and options analytics (IV surface, Monte Carlo simulation, AI predictions, pre-trade risk scans, and more).
 
@@ -63,6 +63,14 @@ import hpsilab_mcp
 print(hpsilab_mcp.__version__)
 ```
 
+## Request tracking
+
+Every request carries `X-HPSILAB-Source: sdk`, `X-HPSILAB-Client: python-sdk`,
+`X-HPSILAB-Version: <installed version>`, `X-HPSILAB-Tool: <method name>` (e.g.
+`get_ai_prediction`), and `User-Agent: hpsilab-python-sdk/<version>`. These are
+merged into any custom `headers` you pass to `HpsiMcpClient(...)` without
+overriding `Authorization` or other business headers.
+
 ## REST SDK Methods
 
 | Method | Endpoint |
@@ -77,6 +85,12 @@ print(hpsilab_mcp.__version__)
 | `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` (alias of `get_equity_curve`) |
 | `generate_stock_images(symbol)` | `POST /api/stock_report/{symbol}/images` |
 | `generate_stock_research_report(symbol)` | `POST /api/stock_report/{symbol}/research_report` |
+
+The SDK itself does not publish MCP tool annotations; those are declared by the
+MCP server in its `tools/list` response. The `GET` analysis methods are
+read-only. The two `generate_*` methods create or refresh hosted artifacts and
+may consume quota or trigger payment; repeated calls are not guaranteed to be
+idempotent.
 
 ## Capability Matrix
 

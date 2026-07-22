@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import httpx
 
+from . import __version__
 from .errors import (
     HpsiMcpAPIError,
     HpsiMcpAuthError,
@@ -17,6 +18,7 @@ from .errors import (
     HpsiMcpResponseError,
     HpsiMcpTimeoutError,
 )
+from .tracking import build_tracking_headers
 
 
 DEFAULT_BASE_URL = "https://hpsilab.com"
@@ -24,6 +26,10 @@ DEFAULT_BASE_URL = "https://hpsilab.com"
 # Header that opts an un-keyed caller into the backend's anonymous read-only
 # path. Must match the backend's MCP_ANONYMOUS_READONLY_HEADER.
 ANONYMOUS_READONLY_HEADER = "x-mcp-anonymous-readonly"
+
+_TRACKING_SOURCE = "sdk"
+_TRACKING_CLIENT = "python-sdk"
+_USER_AGENT = f"hpsilab-python-sdk/{__version__}"
 
 
 class HpsiMcpClient:
@@ -37,7 +43,16 @@ class HpsiMcpClient:
         headers: Optional[Mapping[str, str]] = None,
         transport: Optional[httpx.BaseTransport] = None,
     ) -> None:
-        request_headers = dict(headers or {})
+        # Tracking headers first (defaults), caller-supplied headers layered on
+        # top, then the business headers (Authorization / anonymous-readonly)
+        # set last so they can never be clobbered by either of the above.
+        request_headers = build_tracking_headers(
+            source=_TRACKING_SOURCE,
+            client=_TRACKING_CLIENT,
+            version=__version__,
+        )
+        request_headers["User-Agent"] = _USER_AGENT
+        request_headers.update(headers or {})
         if api_key:
             request_headers["Authorization"] = f"Bearer {api_key}"
         else:
@@ -69,34 +84,40 @@ class HpsiMcpClient:
         self.close()
 
     def get_ai_prediction(self, symbol: str) -> Any:
-        return self._get(f"/api/ai_prediction/{self._path_symbol(symbol)}")
+        return self._get(f"/api/ai_prediction/{self._path_symbol(symbol)}", tool_name="get_ai_prediction")
 
     def analyze_stock(self, symbol: str, refresh: bool = False) -> Any:
         return self._get(
             f"/api/analyze_stock/{self._path_symbol(symbol)}",
             params=self._query_params(refresh=refresh),
+            tool_name="analyze_stock",
         )
 
     def get_iv_radar(self, symbol: str) -> Any:
-        return self._get("/api/iv_batch", params={"symbols": self._clean_symbol(symbol)})
+        return self._get(
+            "/api/iv_batch",
+            params={"symbols": self._clean_symbol(symbol)},
+            tool_name="get_iv_radar",
+        )
 
     def get_option_pressure(self, symbol: str) -> Any:
-        return self._get(f"/api/option_pressure/{self._path_symbol(symbol)}")
+        return self._get(f"/api/option_pressure/{self._path_symbol(symbol)}", tool_name="get_option_pressure")
 
     def get_pretrade_risk_scan(self, symbol: str) -> Any:
         return self._get(
             f"/api/pretrade-risk-scan",
             params={"symbol": self._clean_symbol(symbol)},
+            tool_name="get_pretrade_risk_scan",
         )
 
     def get_equity_curve(self, symbol: str) -> Any:
-        return self._get(f"/api/equity_curve/{self._path_symbol(symbol)}")
+        return self._get(f"/api/equity_curve/{self._path_symbol(symbol)}", tool_name="get_equity_curve")
 
     def get_equity_curves(self, symbol: str) -> Any:
         return self.get_equity_curve(symbol)
 
     def get_monte_carlo(self, symbol: str) -> Any:
-        return self._get(f"/api/monte_carlo/{self._path_symbol(symbol)}")
+        return self._get(f"/api/monte_carlo/{self._path_symbol(symbol)}", tool_name="get_monte_carlo")
 
     def generate_stock_images(
         self,
@@ -107,6 +128,7 @@ class HpsiMcpClient:
         return self._post(
             f"/api/stock_report/{self._path_symbol(symbol)}/images",
             params=self._query_params(force=force, types=self._join_types(types)),
+            tool_name="generate_stock_images",
         )
 
     def generate_stock_research_report(
@@ -118,15 +140,30 @@ class HpsiMcpClient:
         return self._post(
             f"/api/stock_report/{self._path_symbol(symbol)}/research_report",
             params=self._query_params(refresh=refresh, force_images=force_images),
+            tool_name="generate_stock_research_report",
+        )
+
+    def _tool_headers(self, tool_name: Optional[str]) -> Optional[dict]:
+        """Per-request override merged on top of the client's default headers
+        (see `build_tracking_headers`) — only `X-HPSILAB-Tool` varies per call,
+        the rest (source/client/version/User-Agent/Authorization/...) stay put."""
+        if not tool_name:
+            return None
+        return build_tracking_headers(
+            source=_TRACKING_SOURCE,
+            client=_TRACKING_CLIENT,
+            version=__version__,
+            tool=tool_name,
         )
 
     def _get(
         self,
         path: str,
         params: Optional[Mapping[str, str]] = None,
+        tool_name: Optional[str] = None,
     ) -> Any:
         try:
-            response = self._client.get(path, params=params)
+            response = self._client.get(path, params=params, headers=self._tool_headers(tool_name))
         except httpx.TimeoutException as exc:
             raise HpsiMcpTimeoutError("Request timed out.") from exc
         except httpx.RequestError as exc:
@@ -139,9 +176,10 @@ class HpsiMcpClient:
         self,
         path: str,
         params: Optional[Mapping[str, str]] = None,
+        tool_name: Optional[str] = None,
     ) -> Any:
         try:
-            response = self._client.post(path, params=params)
+            response = self._client.post(path, params=params, headers=self._tool_headers(tool_name))
         except httpx.TimeoutException as exc:
             raise HpsiMcpTimeoutError("Request timed out.") from exc
         except httpx.RequestError as exc:

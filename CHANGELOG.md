@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.3 - 2026-07-23
+
+### Added
+
+* API tracking headers on every request: `X-HPSILAB-Source`,
+  `X-HPSILAB-Client`, `X-HPSILAB-Version`, and `X-HPSILAB-Tool` (per method
+  called), plus a `hpsilab-python-sdk/<version>` `User-Agent`. Merged on top
+  of any custom `headers` without overriding `Authorization`.
+
+### Documentation
+
+* Clarified that MCP tool annotations are server-side metadata and that the two
+  `generate_*` SDK methods create or refresh hosted artifacts, may consume
+  quota or trigger payment, and are not guaranteed to be idempotent.
+
 ## v0.5.1 - 2026-07-05
 
 ### Improved
