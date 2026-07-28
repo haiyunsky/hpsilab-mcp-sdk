@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from types import TracebackType
 from typing import Any, Mapping, Optional, Sequence, Type
 from urllib.parse import quote
@@ -206,6 +207,8 @@ class HpsiMcpClient:
                 response_text=response.text,
             )
         if response.status_code == 429:
+            if self._api_key is None:
+                self._warn_anon_rate_limited(response)
             raise HpsiMcpRateLimitError(
                 message,
                 status_code=response.status_code,
@@ -234,10 +237,38 @@ class HpsiMcpClient:
             return f"API request failed with status {response.status_code}."
 
         if isinstance(data, dict):
-            detail = data.get("detail") or data.get("error") or data.get("message")
+            # `message`/`error_message` are the human-readable sentences the
+            # backend writes for this failure; `detail` is FastAPI's default
+            # key for simple HTTPException bodies (401/403/...); `error` is a
+            # last-resort fallback since it's often just a machine code (e.g.
+            # "rate_limit_exceeded") rather than something meant for display.
+            detail = data.get("message") or data.get("error_message") or data.get("detail") or data.get("error")
             if isinstance(detail, str) and detail:
                 return detail
         return f"API request failed with status {response.status_code}."
+
+    def _warn_anon_rate_limited(self, response: httpx.Response) -> None:
+        """Surface the register/upgrade nudge to a human, since an anonymous
+        caller's script is likely only checking status codes and would
+        otherwise never see the friendly message buried in the JSON body.
+        Uses the standard warnings module so Python's default filter dedups
+        identical warnings per process — no manual "already shown" state."""
+        register_url = "https://hpsilab.com/register"
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                upgrade = body.get("upgrade")
+                if isinstance(upgrade, dict):
+                    candidate = upgrade.get("register_url")
+                    if isinstance(candidate, str) and candidate:
+                        register_url = candidate
+        except ValueError:
+            pass
+        warnings.warn(
+            f"hpsilab: anonymous rate limit hit. Register free for a higher "
+            f"quota: {register_url}",
+            stacklevel=3,
+        )
 
     def _path_symbol(self, symbol: str) -> str:
         return quote(self._clean_symbol(symbol), safe="")

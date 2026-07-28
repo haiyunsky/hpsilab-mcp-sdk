@@ -1,4 +1,5 @@
 import unittest
+import warnings
 
 import httpx
 
@@ -150,6 +151,62 @@ class HpsiMcpClientTests(unittest.TestCase):
 
         self.assertEqual(context.exception.status_code, 429)
         self.assertEqual(str(context.exception), "Too many requests")
+        client.close()
+
+    def test_error_message_prefers_message_over_error_code(self) -> None:
+        # Backend 429 bodies put a machine-readable code in `error` ahead of
+        # the human-readable `message` — the SDK must not surface the code.
+        client = HpsiMcpClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    429,
+                    json={"error": "rate_limit_exceeded", "message": "Daily limit reached. Register free."},
+                )
+            )
+        )
+
+        with self.assertRaises(HpsiMcpRateLimitError) as context:
+            client.get_equity_curve("NVDA")
+
+        self.assertEqual(str(context.exception), "Daily limit reached. Register free.")
+        client.close()
+
+    def test_anon_rate_limit_warns_once(self) -> None:
+        client = HpsiMcpClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    429,
+                    json={
+                        "message": "Daily limit reached.",
+                        "upgrade": {"register_url": "https://hpsilab.com/register"},
+                    },
+                )
+            )
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpRateLimitError):
+                client.get_equity_curve("NVDA")
+
+        self.assertEqual(len(caught), 1)
+        self.assertIn("hpsilab.com/register", str(caught[0].message))
+        client.close()
+
+    def test_authenticated_client_does_not_warn_on_rate_limit(self) -> None:
+        client = HpsiMcpClient(
+            api_key="test-key",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(429, json={"message": "Monthly quota exceeded."})
+            ),
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpRateLimitError):
+                client.get_equity_curve("NVDA")
+
+        self.assertEqual(len(caught), 0)
         client.close()
 
 

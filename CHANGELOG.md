@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.4 - 2026-07-29
+
+### Fixed
+
+* `HpsiMcpAPIError.args`/`str()` no longer surfaces the backend's
+  machine-readable `error` code (e.g. `"rate_limit_exceeded"`) ahead of its
+  human-readable `message`/`error_message` — the friendly sentence now wins.
+
+### Added
+
+* Anonymous (no `api_key`) callers now get a one-time `warnings.warn()` when
+  they hit a 429, pointing at `hpsilab.com/register` (or the backend's own
+  `upgrade.register_url` when present) — visible even to unattended scripts
+  that only check `response.status_code`. Authenticated callers never see it.
+
 ## v0.5.3 - 2026-07-23
 
 ### Added
