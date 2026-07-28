@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "declaration": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      // examples/ import from the published package name (what consumers
+      // actually write); this maps it to source for local typecheck/dev
+      // only — it plays no part in the tsup build, which only bundles
+      // src/index.ts.
+      "@hpsilab/sdk": ["src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]
+}

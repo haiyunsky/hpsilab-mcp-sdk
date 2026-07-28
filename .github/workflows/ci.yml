@@ -1,0 +1,56 @@
+name: hpsilab-typescript-sdk CI
+
+# Scoped to the typescript/ subdirectory. `paths:` keeps it from running on
+# every unrelated PR in this repo (e.g. Python SDK changes).
+on:
+  pull_request:
+    paths:
+      - "typescript/**"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "typescript/**"
+      - ".github/workflows/ci.yml"
+
+defaults:
+  run:
+    working-directory: typescript
+
+jobs:
+  ci:
+    name: lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Each step below runs only if the previous one succeeded (GitHub
+      # Actions' default step behavior) — a lint failure stops the job before
+      # typecheck/test/build ever run.
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build

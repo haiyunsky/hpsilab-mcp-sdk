@@ -1,0 +1,24 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+coverage/
+# (no functional change — trivial edit to trigger a fresh release.yml push run
+# after fixing the repo's "Allow GitHub Actions to create and approve pull
+# requests" setting; see PR #16's release run for the failure this tests)
+# (no functional change — bundled into this PR so merging it both fixes the
+# NPM_TOKEN env wiring AND triggers a fresh push-triggered release.yml run;
+# release.yml's own path filter doesn't include workflow files themselves,
+# so a workflow-only change wouldn't otherwise fire a new run. master already
+# has package.json at 0.1.0 with no pending changeset, so this run should go
+# straight to the publish path. See Release #5's 403 for the bug this fixes.)
+# (no functional change — trigger commit for the first real publish attempt
+# now that NPM_TOKEN wiring (PR #19) is merged. master already has 0.1.0
+# with no pending changeset, so this push should skip the version-bump path
+# entirely and go straight to `changeset publish`.)
+# (no functional change — trigger commit to fire a fresh push-triggered
+# release.yml run now that the npm@latest upgrade step (842e66a) is on
+# master. release.yml's path filter only covers hpsilab-typescript-sdk/**,
+# so the workflow-only commit itself didn't trigger a run. master already
+# has 0.2.0 with no pending changeset, so this run should go straight to
+# `changeset publish` using the upgraded npm.)

@@ -1,0 +1,111 @@
+name: hpsilab-typescript-sdk Release
+
+# Changesets-driven release flow, scoped to the typescript/ subdirectory
+# (see .changeset/config.json's baseBranch: "main" — this repo's default
+# branch).
+#
+# On every push to main that touches typescript/: if unreleased changesets
+# exist, changesets/action opens/updates a "Version Packages" PR (bumping
+# package.json + CHANGELOG.md, consuming the changeset files). Merging that
+# PR triggers this workflow again; this time there are no pending changesets,
+# so the action instead runs the publish command, which builds, publishes to
+# npm with provenance, and pushes the version-bump commit + a git tag.
+#
+# Publishing authenticates via npm Trusted Publishing (OIDC) — configured on
+# npmjs.com under @hpsilab/sdk's package Settings -> Trusted Publishing
+# (organization haiyunsky, repository hpsilab-mcp-sdk, workflow filename
+# release.yml, action npm publish). No NPM_TOKEN secret is used or required:
+# the job's permissions.id-token: write below is what lets GitHub mint the
+# short-lived OIDC token npm exchanges for a publish credential.
+#
+# npm's provenance attestation (which OIDC Trusted Publishing requires)
+# only supports public source repos — this repo is public, unlike the
+# quantum_app monorepo this SDK originally lived in, which is why the SDK
+# was moved here.
+#
+# The "Upgrade npm" step below is required: actions/setup-node's bundled npm
+# on Node 22 (10.x) predates npm's OIDC Trusted Publishing support (added in
+# npm 11.5.1) — without it, npm publish silently skips the OIDC token
+# exchange and the registry rejects the publish with a 404.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "typescript/**"
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Version or Publish
+    runs-on: ubuntu-latest
+    # Job-level (GitHub Actions has no finer step-level permissions grant —
+    # this is the correct scope, applying to every step in this one job
+    # without widening anything at the workflow level).
+    permissions:
+      contents: write
+      pull-requests: write
+      # The actual mechanism enabling npm Trusted Publishing (OIDC): lets
+      # GitHub mint a short-lived, workflow-scoped OIDC token that npm
+      # exchanges for a publish credential — no long-lived NPM_TOKEN secret
+      # needed. Also mints the Sigstore-signed provenance attestation for
+      # `npm publish --provenance`.
+      id-token: write
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # changesets needs history to diff for pending changesets.
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: typescript/pnpm-lock.yaml
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Upgrade npm for OIDC trusted publishing
+        # actions/setup-node's bundled npm (10.x on Node 22) predates npm's
+        # OIDC Trusted Publishing support (added in npm 11.5.1) — without
+        # this, `npm publish` silently skips the OIDC token exchange and
+        # the registry rejects the publish with a 404.
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Create Version PR or Publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          cwd: typescript
+          # Runs `changeset version` when changesets are pending (opens/
+          # updates the Version Packages PR); once merged, runs this publish
+          # command instead. --provenance is enabled via NPM_CONFIG_PROVENANCE
+          # below rather than hardcoded here, since `changeset publish` shells
+          # out to `npm publish` per package and that env var is what npm
+          # actually reads.
+          publish: pnpm changeset publish
+          version: pnpm changeset version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No NPM_TOKEN / NODE_AUTH_TOKEN here — npm Trusted Publishing
+          # (OIDC) is configured on the registry side for this package (see
+          # the file header), so `npm publish` authenticates automatically
+          # using the id-token: write permission above. No secret to manage
+          # or rotate, and immune to npm's ongoing bypass-2FA-token
+          # deprecation (see https://docs.npmjs.com/trusted-publishers).
+          NPM_CONFIG_PROVENANCE: true
