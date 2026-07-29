@@ -37,6 +37,21 @@ client = HpsiMcpClient(api_key="YOUR_API_KEY")
 
 Do not commit API keys or local secrets.
 
+### Wallet (optional)
+
+`wallet=` lets the client answer an HTTP 402 payment challenge instead of
+raising it (see [Payments](#payments)):
+
+```python
+from hpsilab_mcp import HpsiMcpClient, X402Wallet
+
+client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
+```
+
+Requires `pip install "hpsilab-mcp[x402]"`. Omit `private_key` to read
+`HPSILAB_X402_PRIVATE_KEY`; a client built with no `wallet=` picks that same
+variable up automatically. Do not commit private keys.
+
 ## Methods
 
 ```python
@@ -47,7 +62,6 @@ client.get_option_pressure("SPY")
 client.get_pretrade_risk_scan("NVDA")
 client.get_monte_carlo("QBTS")
 client.get_equity_curve("IONQ")
-client.get_equity_curves("IONQ")
 client.generate_stock_images("NVDA")
 client.generate_stock_research_report("NVDA")
 ```
@@ -63,7 +77,6 @@ Endpoint mapping:
 | `get_pretrade_risk_scan(symbol)` | `GET /api/pretrade-risk-scan?symbol={symbol}` |
 | `get_monte_carlo(symbol)` | `GET /api/monte_carlo/{symbol}` |
 | `get_equity_curve(symbol)` | `GET /api/equity_curve/{symbol}` |
-| `get_equity_curves(symbol)` | `GET /api/equity_curve/{symbol}` |
 | `generate_stock_images(symbol)` | `POST /api/stock_report/{symbol}/images` |
 | `generate_stock_research_report(symbol)` | `POST /api/stock_report/{symbol}/research_report` |
 
@@ -72,8 +85,8 @@ REST SDK. The `GET` methods are read-only. The two `generate_*` methods create
 or refresh hosted artifacts and may consume quota or trigger payment; callers
 should not assume repeated requests are idempotent.
 
-`get_equity_curve(symbol)` remains available as a backwards-compatible alias
-for `get_equity_curves(symbol)`.
+`get_equity_curves(symbol)` is a deprecated alias of `get_equity_curve(symbol)`;
+it warns on use and will be removed in the next major release.
 
 ## Capability Matrix
 
@@ -85,8 +98,7 @@ for `get_equity_curves(symbol)`.
 | `get_option_pressure` | Yes | Yes |
 | `get_pretrade_risk_scan` | Yes | Yes |
 | `get_monte_carlo` | Yes | Yes |
-| `get_equity_curve` | Yes | No |
-| `get_equity_curves` | Yes | Yes |
+| `get_equity_curve` | Yes | Yes |
 | `generate_stock_images` | Yes | Yes |
 | `generate_stock_research_report` | Yes | Yes |
 
@@ -105,10 +117,33 @@ The SDK exposes typed exceptions:
 * `HpsiMcpTimeoutError`
 * `HpsiMcpAPIError`
 * `HpsiMcpAuthError`
+* `HpsiMcpPaymentError`
 * `HpsiMcpRateLimitError`
 * `HpsiMcpResponseError`
 
 API errors include `status_code` and `response_text` when available.
+
+## Payments
+
+An anonymous caller past a tool's free daily quota — or calling a Pro tool,
+which has no anonymous allowance — gets **HTTP 402** carrying an
+[x402](https://x402.org) challenge rather than a flat refusal. `402` is
+therefore a normal, recoverable outcome, not a client bug.
+
+Without a wallet the SDK raises `HpsiMcpPaymentError`, which carries the
+challenge so you can pay it with your own x402 client:
+
+| Attribute | Meaning |
+| --- | --- |
+| `accepts` | Payment options: `scheme`, `network`, `asset`, `amount`, `payTo` |
+| `tool` | Tool the challenge is for |
+| `price` | Display price, e.g. `"$0.10"` |
+| `response_text` | Raw 402 body |
+
+With a wallet configured, the client signs the challenge and repeats the
+request once. It never pays pre-emptively (the free call is attempted first),
+never retries a second time, and refuses any challenge above
+`max_price_usdc` (default `$1.00`). Signing is local — the key is not sent.
 
 ## Scope
 

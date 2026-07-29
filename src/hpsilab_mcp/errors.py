@@ -37,7 +37,34 @@ class HpsiMcpAuthError(HpsiMcpAPIError):
 
 
 class HpsiMcpPaymentError(HpsiMcpAPIError):
-    """Raised when a Pro-tier tool is called without a paid plan (HTTP 402)."""
+    """Raised on HTTP 402 — the call is available, but it has to be paid for.
+
+    The API answers 402 when an anonymous caller has used up the free quota for
+    a tool (or asks for a Pro tool, which has no anonymous allowance). The
+    x402 challenge is attached so a caller can pay without re-parsing the body:
+
+    * ``accepts`` — the payment options, each with scheme/network/asset/amount.
+    * ``tool`` / ``price`` — which tool, and its price as a display string.
+
+    Configure ``HpsiMcpClient(wallet=...)`` to sign and retry automatically;
+    otherwise pay `accepts` with your own x402 client and resend the request
+    with the resulting payment header.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        response_text: Optional[str] = None,
+        accepts: Optional[list] = None,
+        tool: Optional[str] = None,
+        price: Optional[str] = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, response_text=response_text)
+        self.accepts = accepts or []
+        self.tool = tool
+        self.price = price
 
 
 class HpsiMcpRateLimitError(HpsiMcpAPIError):

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.0 - 2026-07-30
+
+### Added
+
+* **Pay-per-call (x402).** The API now answers HTTP 402 instead of a permanent
+  429/403 when an anonymous caller has used up a tool's free quota (or asks for
+  a Pro tool). `HpsiMcpPaymentError` carries the challenge — `accepts`, `tool`,
+  `price` — so it can be paid with any x402 client. Pass
+  `HpsiMcpClient(wallet=X402Wallet(private_key))`, or set
+  `HPSILAB_X402_PRIVATE_KEY`, to sign and retry automatically; payments are
+  capped at `max_price_usdc` (default $1.00) per call and never made
+  pre-emptively. Requires the optional extra: `pip install "hpsilab-mcp[x402]"`.
+
+### Changed
+
+* `get_equity_curves()` is deprecated in favour of `get_equity_curve()` and now
+  emits a `DeprecationWarning`; the singular name is the canonical one
+  everywhere (MCP tool, REST metering, docs). The alias will be removed in the
+  next major release.
+
 ## v0.5.4 - 2026-07-29
 
 ### Fixed

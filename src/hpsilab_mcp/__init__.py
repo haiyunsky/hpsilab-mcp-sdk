@@ -26,6 +26,7 @@ from .errors import (
     HpsiMcpResponseError,
     HpsiMcpTimeoutError,
 )
+from .payments import X402Wallet
 
 __all__ = [
     "HpsiMcpAPIError",
@@ -37,5 +38,6 @@ __all__ = [
     "HpsiMcpRateLimitError",
     "HpsiMcpResponseError",
     "HpsiMcpTimeoutError",
+    "X402Wallet",
     "__version__",
 ]

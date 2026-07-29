@@ -19,6 +19,7 @@ from .errors import (
     HpsiMcpResponseError,
     HpsiMcpTimeoutError,
 )
+from .payments import X402Wallet, wallet_from_env
 from .tracking import build_tracking_headers
 
 
@@ -43,6 +44,7 @@ class HpsiMcpClient:
         timeout: float = 30.0,
         headers: Optional[Mapping[str, str]] = None,
         transport: Optional[httpx.BaseTransport] = None,
+        wallet: Optional[X402Wallet] = None,
     ) -> None:
         # Tracking headers first (defaults), caller-supplied headers layered on
         # top, then the business headers (Authorization / anonymous-readonly)
@@ -62,6 +64,9 @@ class HpsiMcpClient:
             request_headers.setdefault(ANONYMOUS_READONLY_HEADER, "1")
 
         self._api_key = api_key
+        # Pay-per-call is opt-in: an explicit wallet, or HPSILAB_X402_PRIVATE_KEY
+        # in the environment. Without one a 402 is raised, never auto-paid.
+        self._wallet = wallet if wallet is not None else wallet_from_env()
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -115,6 +120,12 @@ class HpsiMcpClient:
         return self._get(f"/api/equity_curve/{self._path_symbol(symbol)}", tool_name="get_equity_curve")
 
     def get_equity_curves(self, symbol: str) -> Any:
+        """Deprecated plural alias of `get_equity_curve`, kept for one release."""
+        warnings.warn(
+            "get_equity_curves() is deprecated; use get_equity_curve().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.get_equity_curve(symbol)
 
     def get_monte_carlo(self, symbol: str) -> Any:
@@ -163,15 +174,7 @@ class HpsiMcpClient:
         params: Optional[Mapping[str, str]] = None,
         tool_name: Optional[str] = None,
     ) -> Any:
-        try:
-            response = self._client.get(path, params=params, headers=self._tool_headers(tool_name))
-        except httpx.TimeoutException as exc:
-            raise HpsiMcpTimeoutError("Request timed out.") from exc
-        except httpx.RequestError as exc:
-            raise HpsiMcpConnectionError("Request failed before a response was received.") from exc
-
-        self._raise_for_status(response)
-        return self._decode_json(response)
+        return self._request("GET", path, params=params, tool_name=tool_name)
 
     def _post(
         self,
@@ -179,15 +182,46 @@ class HpsiMcpClient:
         params: Optional[Mapping[str, str]] = None,
         tool_name: Optional[str] = None,
     ) -> Any:
+        return self._request("POST", path, params=params, tool_name=tool_name)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Mapping[str, str]] = None,
+        tool_name: Optional[str] = None,
+    ) -> Any:
+        response = self._send(method, path, params, tool_name)
+
+        # 402 means "this call is available, it just costs money now". With a
+        # wallet configured, sign the challenge and repeat the request once;
+        # without one, fall through to _raise_for_status and hand the caller
+        # the challenge to pay however they like.
+        if response.status_code == 402 and self._wallet is not None:
+            payment_headers = self._wallet.payment_headers(response)
+            if payment_headers:
+                response = self._send(method, path, params, tool_name, extra=payment_headers)
+
+        self._raise_for_status(response)
+        return self._decode_json(response)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Mapping[str, str]],
+        tool_name: Optional[str],
+        extra: Optional[Mapping[str, str]] = None,
+    ) -> httpx.Response:
+        headers = self._tool_headers(tool_name) or {}
+        if extra:
+            headers = {**headers, **extra}
         try:
-            response = self._client.post(path, params=params, headers=self._tool_headers(tool_name))
+            return self._client.request(method, path, params=params, headers=headers or None)
         except httpx.TimeoutException as exc:
             raise HpsiMcpTimeoutError("Request timed out.") from exc
         except httpx.RequestError as exc:
             raise HpsiMcpConnectionError("Request failed before a response was received.") from exc
-
-        self._raise_for_status(response)
-        return self._decode_json(response)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code < 400:
@@ -201,11 +235,7 @@ class HpsiMcpClient:
                 response_text=response.text,
             )
         if response.status_code == 402:
-            raise HpsiMcpPaymentError(
-                message,
-                status_code=response.status_code,
-                response_text=response.text,
-            )
+            raise self._payment_error(message, response)
         if response.status_code == 429:
             if self._api_key is None:
                 self._warn_anon_rate_limited(response)
@@ -218,6 +248,41 @@ class HpsiMcpClient:
             message,
             status_code=response.status_code,
             response_text=response.text,
+        )
+
+    def _payment_error(self, message: str, response: httpx.Response) -> HpsiMcpPaymentError:
+        """Attach the x402 challenge to the raised error.
+
+        The body of a 402 is the challenge document, so pull `accepts` (and the
+        tool/price hpsilab adds alongside it) onto the exception — a caller
+        paying with their own x402 client shouldn't have to re-parse
+        `response_text` to find out what was being asked for. A body that isn't
+        the expected shape degrades to a plain payment error, never a decode
+        crash on top of the original failure.
+        """
+        accepts = tool = price = None
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                raw_accepts = body.get("accepts")
+                accepts = raw_accepts if isinstance(raw_accepts, list) else None
+                tool = body.get("tool")
+                price = body.get("price")
+        except ValueError:
+            pass
+
+        if price and self._wallet is None:
+            message = (
+                f"{message} Pay {price} per call by configuring "
+                "HpsiMcpClient(wallet=X402Wallet(...))."
+            )
+        return HpsiMcpPaymentError(
+            message,
+            status_code=response.status_code,
+            response_text=response.text,
+            accepts=accepts,
+            tool=tool,
+            price=price,
         )
 
     def _decode_json(self, response: httpx.Response) -> Any:
