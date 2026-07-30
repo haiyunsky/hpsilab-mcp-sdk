@@ -72,7 +72,11 @@ class X402Wallet:
             from x402.http import x402HTTPClientSync
             from x402.mechanisms.evm.exact import register_exact_evm_client
         except ImportError as exc:  # pragma: no cover - depends on the install
-            raise ImportError(_INSTALL_HINT) from exc
+            # Keep the underlying reason in the message. A partial install —
+            # x402 present but its EVM signer deps missing — otherwise reports
+            # "install the extra" to someone who already did, which is what
+            # made 0.6.0's bad extra hard to read.
+            raise ImportError(f"{_INSTALL_HINT} (underlying import error: {exc})") from exc
 
         account = Account.from_key(key)
         self.address: str = account.address

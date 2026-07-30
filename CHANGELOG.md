@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.6.1 - 2026-07-30
+
+### Fixed
+
+* The `x402` extra now installs `x402[evm]` rather than bare `x402`. The EVM
+  signer imports `web3` at import time and bare `x402` does not depend on it,
+  so on 0.6.0 `pip install "hpsilab-mcp[x402]"` produced an install that looked
+  complete but raised `ImportError` as soon as `X402Wallet(...)` was
+  constructed. Existing 0.6.0 installs can be repaired with
+  `pip install "x402[evm]"`.
+* A failed wallet import now reports the underlying error alongside the install
+  hint, instead of telling someone who already installed the extra to install
+  it again.
+
 ## v0.6.0 - 2026-07-30
 
 ### Added

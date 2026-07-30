@@ -1,6 +1,6 @@
 [project]
 name = "hpsilab-mcp"
-version = "0.6.0"
+version = "0.6.1"
 description = "Python SDK for the HPSILab quantitative finance API — options analytics, IV surface modeling, Monte Carlo simulation, and AI-driven predictions, with native MCP support."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -46,8 +46,12 @@ dependencies = [
 [project.optional-dependencies]
 # Pay-per-call. Only needed to answer an HTTP 402 challenge automatically —
 # every free-quota call works without it. See hpsilab_mcp/payments.py.
+# x402[evm], not bare x402: the EVM signer module imports web3 at import
+# time, and bare x402 does not depend on it. Installing the two separately
+# produces a working-looking install that raises ImportError the moment a
+# wallet is constructed (0.6.0 shipped exactly that).
 x402 = [
-  "x402>=2.14,<3",
+  "x402[evm]>=2.14,<3",
   "eth-account>=0.13,<1",
 ]
 
