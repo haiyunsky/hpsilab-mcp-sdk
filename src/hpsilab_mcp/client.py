@@ -357,7 +357,10 @@ class HpsiMcpClient:
                 response_text=response.text,
             )
         if response.status_code == 402:
-            raise self._payment_error(message, response)
+            error = self._payment_error(message, response)
+            if self._api_key is None:
+                self._warn_anon_payment_required(error.price)
+            raise error
         if response.status_code == 429:
             if self._api_key is None:
                 self._warn_anon_rate_limited(response)
@@ -393,11 +396,21 @@ class HpsiMcpClient:
         except ValueError:
             pass
 
-        if price and self._wallet is None:
+        if self._wallet is None:
+            # Ordered by what the caller can actually do from here. A wallet
+            # cannot be acquired mid-traceback — configuring one means editing
+            # code and holding USDC — whereas `register_account` is a method on
+            # the object that just raised, needs no wallet and no browser, and
+            # is the only option that resolves this within the running process.
             message = (
-                f"{message} Pay {price} per call by configuring "
-                "HpsiMcpClient(wallet=X402Wallet(...))."
+                f"{message} To continue without a wallet, register free from "
+                'this process: client.register_account(email="you@example.com").'
             )
+            if price:
+                message = (
+                    f"{message} Or pay {price} per call by configuring "
+                    "HpsiMcpClient(wallet=X402Wallet(...))."
+                )
         return HpsiMcpPaymentError(
             message,
             status_code=response.status_code,
@@ -434,6 +447,30 @@ class HpsiMcpClient:
                 return detail
         return f"API request failed with status {response.status_code}."
 
+    def _warn_anon_payment_required(self, price: Optional[str]) -> None:
+        """Surface the wallet-free way out of a 402 to the human running this.
+
+        A 402 is where an anonymous caller's free allowance ends for good, so
+        it is the moment the nudge matters most — and it is the one moment the
+        429 nudge below never reaches, because `_raise_for_status` branches on
+        402 first. Without this, crossing into overage *silences* the only
+        human-visible prompt the SDK has, leaving a traceback recommending a
+        crypto wallet as the script's entire output. Server-side message
+        wording cannot fix that: nothing on this path reads it.
+
+        Named as a method call rather than a URL on purpose. A URL needs a
+        person with a browser; `register_account` is on the object that just
+        raised, and resolves this inside the running process.
+        """
+        cost = f" ({price} per call from here)" if price else ""
+        warnings.warn(
+            f"hpsilab: the free anonymous quota is used up{cost}. To keep "
+            "going without a wallet, register a free account from this "
+            'process: client.register_account(email="you@example.com"). '
+            "Pay-per-call details are on the raised HpsiMcpPaymentError.",
+            stacklevel=3,
+        )
+
     def _warn_anon_rate_limited(self, response: httpx.Response) -> None:
         """Surface the register/upgrade nudge to a human, since an anonymous
         caller's script is likely only checking status codes and would
@@ -451,18 +488,23 @@ class HpsiMcpClient:
                         register_url = candidate
         except ValueError:
             pass
+        # `register_account` leads in both branches: it is the only step here
+        # that a running script can take on its own. The URL stays as the
+        # follow-up, because the emailed confirmation still needs a person.
         if self._anon_key:
             # Already using a free key and still out of quota — the remaining
             # step is an account, so don't advertise a key it already has.
             warnings.warn(
-                f"hpsilab: daily limit reached on your free anonymous key. "
-                f"Bind an email for the full Free plan: {register_url}",
+                "hpsilab: daily limit reached on your free anonymous key. "
+                'Bind an email for the full Free plan: client.register_account'
+                f'(email="you@example.com"), or sign up at {register_url}',
                 stacklevel=3,
             )
             return
         warnings.warn(
-            f"hpsilab: anonymous rate limit hit. Register free for a higher "
-            f"quota: {register_url}",
+            "hpsilab: anonymous rate limit hit. Register free for a higher "
+            'quota: client.register_account(email="you@example.com"), '
+            f"or sign up at {register_url}",
             stacklevel=3,
         )
 

@@ -7,6 +7,7 @@ challenge they can act on.
 """
 
 import unittest
+import warnings
 
 import httpx
 
@@ -64,6 +65,50 @@ class PaymentFlowTests(unittest.TestCase):
         # that they were refused.
         self.assertIn("$0.10", str(error))
         self.assertIn("X402Wallet", str(error))
+        # The wallet-free option must come first: it is the only one a running
+        # process can act on without a person or a code change.
+        self.assertIn("register_account", str(error))
+        self.assertLess(
+            str(error).index("register_account"), str(error).index("X402Wallet")
+        )
+        client.close()
+
+    def test_402_warns_an_anonymous_caller_the_way_429_does(self) -> None:
+        """The conversion hole found in the 2026-07-31 logs. `_raise_for_status`
+        branches on 402 before 429, so crossing into overage used to *silence*
+        the only human-visible prompt the SDK has — a caller's second session
+        got a bare traceback recommending a crypto wallet and nothing else.
+        No server-side wording can fix that: on this path nothing reads it."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(402, json=CHALLENGE)
+
+        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+
+        with self.assertWarns(UserWarning) as warned:
+            with self.assertRaises(HpsiMcpPaymentError):
+                client.get_monte_carlo("NVDA")
+
+        message = str(warned.warning)
+        self.assertIn("register_account", message)
+        self.assertIn("$0.10", message)
+        client.close()
+
+    def test_402_stays_quiet_for_a_caller_with_its_own_key(self) -> None:
+        """An account holder's 402 is a plan question, not an onboarding one —
+        telling them to register would be noise. Mirrors the 429 branch."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(402, json=CHALLENGE)
+
+        client = HpsiMcpClient(api_key="hpsi_real", transport=httpx.MockTransport(handler))
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpPaymentError):
+                client.get_monte_carlo("NVDA")
+
+        self.assertEqual([w for w in caught if "register_account" in str(w.message)], [])
         client.close()
 
     def test_wallet_pays_and_the_retry_carries_the_payment_header(self) -> None:
