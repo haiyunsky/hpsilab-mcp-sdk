@@ -62,12 +62,80 @@ print(result)
 
 Pass an `api_key` to raise rate limits or unlock account-specific features, where applicable.
 
+## Your free API key, picked up automatically
+
+Anonymous callers share one daily pool across all tools. On your first
+successful call the API issues a **free key** and this client adopts it
+automatically — every later request carries it, which raises the daily
+allowance substantially. Nothing to configure.
+
+```python
+client = HpsiMcpClient()
+client.get_monte_carlo("NVDA")
+client.anon_key          # 'hpsi_anon_...' — issued and now in use
+```
+
+Persist it and hand it back to keep the larger allowance in a later process.
+The key is not tied to your IP address, which matters because cloud egress
+addresses drift:
+
+```python
+client = HpsiMcpClient(anon_key=saved_key)
+```
+
+If you hit the anonymous ceiling before a key was in play, the `429` carries
+one; the client adopts it and retries the call once, so you get data rather
+than an exception. A client constructed with a real `api_key` is unaffected —
+its credential is never displaced and `anon_key` stays `None`.
+
+Binding an email to the key unlocks the full Free plan:
+<https://hpsilab.com/register>
+
+## Registering your own account (for agents)
+
+An agent can complete the whole anonymous → account transition itself. No
+password, no wallet, no web form:
+
+```python
+client = HpsiMcpClient()
+client.register_account("you@example.com")
+client.get_monte_carlo("NVDA")     # now metered as your account
+```
+
+The client switches to the returned account key automatically, and the account
+is *also* bound to this caller server-side — so a process that cannot change
+its own `Authorization` header (an MCP connection, for instance) is still
+recognised on later calls.
+
+The account starts unverified, which keeps the anonymous daily allowance until
+the emailed link is confirmed; confirming it unlocks the full Free plan. Use a
+real address — one nobody reads leaves the account at the anonymous allowance
+forever.
+
+Calling again returns the same account and a fresh key rather than creating a
+second one, so it is safe to call when you have lost your key. An address that
+already belongs to a different account raises `HpsiMcpAPIError` with status
+`409`, leaving your current identity untouched.
+
+Pass `adopt_key=False` to get the response without switching this client over
+— useful when you mean to hand the key to another process.
+
 ## Paying past the free quota
 
-Anonymous callers get a per-tool daily quota. Once it runs out — or when
-calling a Pro tool, which has no anonymous allowance — the API answers **HTTP
-402** with an [x402](https://x402.org) payment challenge instead of refusing
-outright, so an agent can pay for the call in USDC on Base and keep working.
+Once the pool is spent — or when calling a Pro tool, which has no anonymous
+allowance — the API answers **HTTP 402** with an [x402](https://x402.org)
+payment challenge instead of refusing outright, so an agent can pay for the
+call in USDC on Base and keep working.
+
+**You do not need a wallet.** Every challenge also names a card checkout URL
+(`https://hpsilab.com/pricing?anon=...`) — relay it to a human if you have no
+USDC. That rail is register-then-pay, and `register_account()` above lets you
+do the registration half unattended.
+
+Before that point, an exhausted caller is served the **last known-good result
+for the same request** rather than an empty error — a `200` carrying
+`X-HPSILAB-Degraded: true` and `X-HPSILAB-Data-Age`. Treat those figures as
+indicative, not current.
 
 Without a wallet the SDK raises `HpsiMcpPaymentError` with the challenge
 attached, and you can pay it however you like:

@@ -29,6 +29,12 @@ DEFAULT_BASE_URL = "https://hpsilab.com"
 # path. Must match the backend's MCP_ANONYMOUS_READONLY_HEADER.
 ANONYMOUS_READONLY_HEADER = "x-mcp-anonymous-readonly"
 
+# The backend issues an anonymous caller a free key on its first *successful*
+# response and repeats it in the body of the 429 that ends its daily pool.
+# Presenting that key raises the pool substantially, so the client adopts it
+# automatically — see `HpsiMcpClient.anon_key`.
+ANON_KEY_HEADER = "x-hpsilab-anon-key"
+
 _TRACKING_SOURCE = "sdk"
 _TRACKING_CLIENT = "python-sdk"
 _USER_AGENT = f"hpsilab-python-sdk/{__version__}"
@@ -45,6 +51,7 @@ class HpsiMcpClient:
         headers: Optional[Mapping[str, str]] = None,
         transport: Optional[httpx.BaseTransport] = None,
         wallet: Optional[X402Wallet] = None,
+        anon_key: Optional[str] = None,
     ) -> None:
         # Tracking headers first (defaults), caller-supplied headers layered on
         # top, then the business headers (Authorization / anonymous-readonly)
@@ -62,8 +69,18 @@ class HpsiMcpClient:
             # No key → anonymous free-trial tier. Opt into the backend's
             # read-only path so free/freemium tools work without an account.
             request_headers.setdefault(ANONYMOUS_READONLY_HEADER, "1")
+            if anon_key:
+                # A key kept from an earlier process. Sent alongside the
+                # read-only header, not instead of it: this is still anonymous
+                # traffic, it is just identifiable anonymous traffic.
+                request_headers["Authorization"] = f"Bearer {anon_key}"
 
         self._api_key = api_key
+        # Tracked separately from `_api_key`, which stays the user's own
+        # credential: an anonymous key is something the server handed us, and
+        # the two must never be confused when deciding whether to adopt a new
+        # one or how to describe a rate-limit error.
+        self._anon_key = anon_key if api_key is None else None
         # Pay-per-call is opt-in: an explicit wallet, or HPSILAB_X402_PRIVATE_KEY
         # in the environment. Without one a 402 is raised, never auto-paid.
         self._wallet = wallet if wallet is not None else wallet_from_env()
@@ -74,6 +91,21 @@ class HpsiMcpClient:
             timeout=timeout,
             transport=transport,
         )
+
+    @property
+    def anon_key(self) -> Optional[str]:
+        """The free anonymous key this client is using, if any.
+
+        Populated automatically the first time the server issues one. Persist
+        it and pass it back as `anon_key=` in a later process to keep the
+        larger daily allowance instead of starting over as an unidentified
+        caller — the key is not tied to your IP address, which matters because
+        cloud egress addresses drift.
+
+        None for a client constructed with a real `api_key`: an account's
+        credential is never displaced by an anonymous one.
+        """
+        return self._anon_key
 
     def close(self) -> None:
         self._client.close()
@@ -155,6 +187,47 @@ class HpsiMcpClient:
             tool_name="generate_stock_research_report",
         )
 
+    def register_account(self, email: str, adopt_key: bool = True) -> Any:
+        """Register a free account for this caller and receive an API key.
+
+        For agents: no password, no wallet, no web form. The account is also
+        bound to this caller server-side, so calls made afterwards are metered
+        as the account even from a process that cannot change its own
+        Authorization header.
+
+        The account starts unverified, which keeps the anonymous daily
+        allowance until the emailed link is confirmed; confirming it unlocks
+        the full Free plan.
+
+        Idempotent: calling again returns the same account and a fresh key,
+        rather than creating a second one. Raises `HpsiMcpAPIError` (409) if
+        the address already belongs to a different account.
+
+        `adopt_key=False` returns the response without switching this client
+        over to the new key — use it when you intend to keep calling
+        anonymously, or to hand the key to a different process.
+        """
+        response = self._send(
+            "POST",
+            "/api/agent/register",
+            params=None,
+            tool_name="register_account",
+            json={"email": email},
+        )
+        self._raise_for_status(response)
+        payload = self._decode_json(response)
+
+        if adopt_key and isinstance(payload, dict):
+            key = (payload.get("api_key") or "").strip()
+            if key:
+                # A real account key, so the anonymous one is now obsolete —
+                # clearing it keeps `anon_key` an honest answer to "what
+                # anonymous identity is in play", which is None from here on.
+                self._api_key = key
+                self._anon_key = None
+                self._client.headers["Authorization"] = f"Bearer {key}"
+        return payload
+
     def _tool_headers(self, tool_name: Optional[str]) -> Optional[dict]:
         """Per-request override merged on top of the client's default headers
         (see `build_tracking_headers`) — only `X-HPSILAB-Tool` varies per call,
@@ -192,6 +265,16 @@ class HpsiMcpClient:
         tool_name: Optional[str] = None,
     ) -> Any:
         response = self._send(method, path, params, tool_name)
+        adopted = self._adopt_anon_key(response)
+
+        # A 429 that came with a key we did not have is the anonymous pool
+        # running out *and* the fix arriving in the same response. Adopting it
+        # and repeating the call once turns that dead end into a served
+        # request; the retry is bounded by `adopted`, which can only be true
+        # the first time, so an exhausted keyed caller still fails normally.
+        if response.status_code == 429 and adopted:
+            response = self._send(method, path, params, tool_name)
+            self._adopt_anon_key(response)
 
         # 402 means "this call is available, it just costs money now". With a
         # wallet configured, sign the challenge and repeat the request once;
@@ -205,6 +288,42 @@ class HpsiMcpClient:
         self._raise_for_status(response)
         return self._decode_json(response)
 
+    def _adopt_anon_key(self, response: httpx.Response) -> bool:
+        """Pick up a server-issued anonymous key and use it from now on.
+
+        Returns True only when a *new* key was adopted, so callers can use that
+        to authorise exactly one retry.
+
+        Skipped entirely for a client built with a real `api_key`: that
+        caller's plan is already better than any anonymous allowance, and
+        silently swapping its credential would be astonishing behaviour.
+
+        The key arrives on a header for a served call and additionally in the
+        JSON body of the 429 that ends the free pool, because an agent that
+        only ever reads the body would otherwise never see it.
+        """
+        if self._api_key is not None:
+            return False
+
+        key = response.headers.get(ANON_KEY_HEADER)
+        if not key and response.status_code == 429:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            if isinstance(body, dict):
+                candidate = body.get("anon_key")
+                if isinstance(candidate, str):
+                    key = candidate
+
+        key = (key or "").strip()
+        if not key or key == self._anon_key:
+            return False
+
+        self._anon_key = key
+        self._client.headers["Authorization"] = f"Bearer {key}"
+        return True
+
     def _send(
         self,
         method: str,
@@ -212,12 +331,15 @@ class HpsiMcpClient:
         params: Optional[Mapping[str, str]],
         tool_name: Optional[str],
         extra: Optional[Mapping[str, str]] = None,
+        json: Optional[Mapping[str, Any]] = None,
     ) -> httpx.Response:
         headers = self._tool_headers(tool_name) or {}
         if extra:
             headers = {**headers, **extra}
         try:
-            return self._client.request(method, path, params=params, headers=headers or None)
+            return self._client.request(
+                method, path, params=params, json=json, headers=headers or None
+            )
         except httpx.TimeoutException as exc:
             raise HpsiMcpTimeoutError("Request timed out.") from exc
         except httpx.RequestError as exc:
@@ -329,6 +451,15 @@ class HpsiMcpClient:
                         register_url = candidate
         except ValueError:
             pass
+        if self._anon_key:
+            # Already using a free key and still out of quota — the remaining
+            # step is an account, so don't advertise a key it already has.
+            warnings.warn(
+                f"hpsilab: daily limit reached on your free anonymous key. "
+                f"Bind an email for the full Free plan: {register_url}",
+                stacklevel=3,
+            )
+            return
         warnings.warn(
             f"hpsilab: anonymous rate limit hit. Register free for a higher "
             f"quota: {register_url}",

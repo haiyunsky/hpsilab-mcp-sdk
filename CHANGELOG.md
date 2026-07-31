@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.8.0 - 2026-07-31
+
+### Added
+
+* **`register_account(email)` — an agent can now register its own account.**
+  No password, no wallet, no web form. Returns a real `hpsi_` API key, which
+  the client adopts automatically (pass `adopt_key=False` to opt out).
+
+  The account is *also* bound to the caller server-side, so a process that
+  cannot rewrite its own `Authorization` header is still recognised as that
+  account on later calls. This is what the anonymous key alone could not
+  solve: the key reached the model, but an MCP agent has no mechanism to send
+  one back.
+
+  The account starts unverified and keeps the anonymous daily allowance until
+  the emailed link is confirmed; confirming it unlocks the full Free plan.
+  Idempotent per caller — a repeat call returns the same account with a fresh
+  key rather than creating a second one, so it is safe to call after losing a
+  key. An address belonging to a different account raises `HpsiMcpAPIError`
+  (409) and leaves the current identity untouched.
+
+### Changed
+
+* Payment documentation now states plainly that **a wallet is not required**:
+  every 402 challenge names a card-checkout URL alongside the x402 option.
+
+## v0.7.0 - 2026-07-30
+
+### Added
+
+* **Anonymous keys are now picked up automatically.** The API issues an
+  un-keyed caller a free key on its first successful response; the client
+  adopts it and sends it on every later request, which raises the daily
+  allowance substantially. Nothing to configure.
+* `HpsiMcpClient.anon_key` exposes that key, and a new `anon_key=` constructor
+  argument accepts one back. Persist it between runs to keep the larger
+  allowance — the key is not tied to your IP address, so it survives the
+  address changes that are normal on cloud hosts.
+* A `429` that ends the free anonymous pool carries the key in its body. The
+  client adopts it and retries the call once, so the first time you hit the
+  anonymous ceiling you get data instead of an exception.
+
+A client constructed with a real `api_key` is unaffected: its credential is
+never displaced, and no anonymous key is adopted or reported.
+
 ## v0.6.1 - 2026-07-30
 
 ### Fixed

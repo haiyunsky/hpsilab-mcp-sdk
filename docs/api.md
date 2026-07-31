@@ -37,6 +37,72 @@ client = HpsiMcpClient(api_key="YOUR_API_KEY")
 
 Do not commit API keys or local secrets.
 
+### Anonymous key (automatic)
+
+You do not need to do anything to get one. On your first successful call the
+API issues a free key and the client adopts it automatically — every later
+request on that client carries it, which raises your daily allowance
+substantially:
+
+```python
+client = HpsiMcpClient()
+client.get_monte_carlo("NVDA")
+client.anon_key   # 'hpsi_anon_...' — issued and now in use
+```
+
+`anon_key` is `None` until one has been issued, and stays `None` for a client
+built with `api_key=` — a real account's credential is never displaced by an
+anonymous one.
+
+To keep the larger allowance across processes, persist `client.anon_key` and
+pass it back in:
+
+```python
+client = HpsiMcpClient(anon_key=saved_key)
+```
+
+The key is not tied to your IP address, so it survives address changes that
+are normal on cloud hosts. If you exhaust the anonymous pool before a key was
+ever issued, the resulting `429` carries one in its body; the client adopts it
+and retries the call once, so the first time you hit the ceiling you get data
+back instead of an exception. Asking again with the same identity returns the
+same key rather than minting a new one.
+
+Binding an email to the key unlocks the full Free plan:
+<https://hpsilab.com/register>
+
+### Self-registration (for agents)
+
+`register_account(email, adopt_key=True)` completes the anonymous → account
+transition with no human step and no web form:
+
+```python
+client = HpsiMcpClient()
+client.register_account("you@example.com")
+client.get_monte_carlo("NVDA")   # metered as your account
+```
+
+The client adopts the returned account key (`anon_key` becomes `None`, since
+no anonymous identity is in play any more). The account is *also* bound to the
+caller server-side, so a process that cannot rewrite its own `Authorization`
+header is still recognised on later calls.
+
+The account is created **unverified**, which resolves to the anonymous quota
+row until the emailed link is confirmed; confirming it lifts the caller to the
+real Free plan. Use an address a human actually reads.
+
+Idempotent per caller: a repeat call returns the same account with a fresh key
+(the old one keeps working) rather than creating a second. An address that
+already belongs to a different account raises `HpsiMcpAPIError` with
+`status_code == 409` and leaves the client's current identity untouched.
+
+Pass `adopt_key=False` to receive the payload without switching this client
+over — e.g. to hand the key to another process.
+
+| Method | Endpoint |
+| --- | --- |
+| `register_account(email)` | `POST /api/agent/register` |
+
 ### Wallet (optional)
 
 `wallet=` lets the client answer an HTTP 402 payment challenge instead of
@@ -101,6 +167,7 @@ it warns on use and will be removed in the next major release.
 | `get_equity_curve` | Yes | Yes |
 | `generate_stock_images` | Yes | Yes |
 | `generate_stock_research_report` | Yes | Yes |
+| `register_account` | Yes | Yes (`register_account` tool) |
 
 ## MCP Transport
 
@@ -123,12 +190,29 @@ The SDK exposes typed exceptions:
 
 API errors include `status_code` and `response_text` when available.
 
+## Degraded responses
+
+Anonymous callers share one daily pool across all tools rather than a
+per-tool allowance. Once it is spent, a call is not simply refused: the API
+replays the last known-good result for that exact request as an ordinary
+`200`, marked with response headers —`X-HPSILAB-Degraded: true` and
+`X-HPSILAB-Data-Age` (e.g. `"3h"`). The SDK does not surface these as a
+distinct exception; treat any response you receive as possibly stale and
+check for the pool having been exhausted via a preceding `429` if that
+matters to your use case. Numbers returned this way are indicative, not
+current — do not use them for anything time-sensitive.
+
 ## Payments
 
-An anonymous caller past a tool's free daily quota — or calling a Pro tool,
-which has no anonymous allowance — gets **HTTP 402** carrying an
+An anonymous caller with the daily pool spent — or calling a Pro tool, which
+has no anonymous allowance at all — eventually gets **HTTP 402** carrying an
 [x402](https://x402.org) challenge rather than a flat refusal. `402` is
 therefore a normal, recoverable outcome, not a client bug.
+
+**A wallet is not required.** Every challenge also names a card-checkout URL
+(`https://hpsilab.com/pricing?anon=...`) for a human paying on behalf of a
+wallet-less agent. That rail is register-then-pay; `register_account()` above
+covers the registration half without a human.
 
 Without a wallet the SDK raises `HpsiMcpPaymentError`, which carries the
 challenge so you can pay it with your own x402 client:
