@@ -91,7 +91,7 @@ class PaymentFlowTests(unittest.TestCase):
 
         message = str(warned.warning)
         self.assertIn("register_account", message)
-        self.assertIn("$0.10", message)
+        self.assertIn("Free API key required", message)
         client.close()
 
     def test_402_stays_quiet_for_a_caller_with_its_own_key(self) -> None:

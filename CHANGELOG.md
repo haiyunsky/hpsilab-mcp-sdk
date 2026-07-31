@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.2 - 2026-07-31
+
+### Changed
+
+* **The 429/402 anonymous-quota warnings are now one unified message**,
+  matching the same simplification made on the backend and mcp_server
+  (`_SIMPLE_QUOTA_MESSAGE`): "Free API key required. Register at
+  `https://hpsilab.com/register`, or call
+  `client.register_account(email=...)`." Replaces the separate keyed/unkeyed
+  wording (`_warn_anon_rate_limited` no longer treats a caller already
+  holding an anonymous key differently) and drops the per-call price from
+  the 402 warning text — the price is still on the raised
+  `HpsiMcpPaymentError`, it just isn't repeated here.
+
 ## v0.8.1 - 2026-07-31
 
 ### Fixed

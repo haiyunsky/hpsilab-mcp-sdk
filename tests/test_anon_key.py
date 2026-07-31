@@ -147,7 +147,7 @@ def test_malformed_429_body_does_not_crash_the_error_path():
             client.get_monte_carlo("AAPL")
 
 
-def test_keyed_caller_is_told_to_bind_an_email_not_to_get_a_key():
+def test_keyed_caller_still_gets_the_unified_quota_warning():
     def handler(request):
         return _pool_exhausted()
 
@@ -158,5 +158,5 @@ def test_keyed_caller_is_told_to_bind_an_email_not_to_get_a_key():
                 client.get_monte_carlo("AAPL")
 
     text = str(caught[-1].message)
-    assert "Bind an email" in text
-    assert "anonymous rate limit hit" not in text
+    assert "Free API key required" in text
+    assert "hpsilab.com/register" in text

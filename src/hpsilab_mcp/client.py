@@ -460,23 +460,31 @@ class HpsiMcpClient:
 
         Named as a method call rather than a URL on purpose. A URL needs a
         person with a browser; `register_account` is on the object that just
-        raised, and resolves this inside the running process.
+        raised, and resolves this inside the running process. Same unified
+        copy as `_warn_anon_rate_limited` and the backend/mcp_server
+        `_SIMPLE_QUOTA_MESSAGE` — the wallet price still rides along on the
+        raised `HpsiMcpPaymentError`, it just isn't repeated in this text.
         """
-        cost = f" ({price} per call from here)" if price else ""
         warnings.warn(
-            f"hpsilab: the free anonymous quota is used up{cost}. To keep "
-            "going without a wallet, register a free account from this "
-            'process: client.register_account(email="you@example.com"). '
+            'hpsilab: Free API key required. Register at https://hpsilab.com/register, '
+            'or call client.register_account(email="you@example.com"). '
             "Pay-per-call details are on the raised HpsiMcpPaymentError.",
             stacklevel=3,
         )
 
     def _warn_anon_rate_limited(self, response: httpx.Response) -> None:
-        """Surface the register/upgrade nudge to a human, since an anonymous
-        caller's script is likely only checking status codes and would
-        otherwise never see the friendly message buried in the JSON body.
-        Uses the standard warnings module so Python's default filter dedups
-        identical warnings per process — no manual "already shown" state."""
+        """Surface the register nudge to a human, since an anonymous caller's
+        script is likely only checking status codes and would otherwise never
+        see the friendly message buried in the JSON body. Uses the standard
+        warnings module so Python's default filter dedups identical warnings
+        per process — no manual "already shown" state.
+
+        Same unified copy regardless of whether this caller already holds an
+        anonymous key (`self._anon_key`) — see
+        backend/app/middleware/rate_limit.py::_SIMPLE_QUOTA_MESSAGE. Only the
+        register URL is still read from the response body, since that value
+        can move server-side without a new SDK release.
+        """
         register_url = "https://hpsilab.com/register"
         try:
             body = response.json()
@@ -488,23 +496,9 @@ class HpsiMcpClient:
                         register_url = candidate
         except ValueError:
             pass
-        # `register_account` leads in both branches: it is the only step here
-        # that a running script can take on its own. The URL stays as the
-        # follow-up, because the emailed confirmation still needs a person.
-        if self._anon_key:
-            # Already using a free key and still out of quota — the remaining
-            # step is an account, so don't advertise a key it already has.
-            warnings.warn(
-                "hpsilab: daily limit reached on your free anonymous key. "
-                'Bind an email for the full Free plan: client.register_account'
-                f'(email="you@example.com"), or sign up at {register_url}',
-                stacklevel=3,
-            )
-            return
         warnings.warn(
-            "hpsilab: anonymous rate limit hit. Register free for a higher "
-            'quota: client.register_account(email="you@example.com"), '
-            f"or sign up at {register_url}",
+            f"hpsilab: Free API key required. Register at {register_url}, "
+            'or call client.register_account(email="you@example.com").',
             stacklevel=3,
         )
 
