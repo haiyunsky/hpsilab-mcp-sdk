@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.8.1 - 2026-07-31
+
+### Fixed
+
+* **A 402 no longer silences the only prompt an anonymous caller gets.**
+  `_raise_for_status` branches on 402 before 429, so crossing from "rate
+  limited" into "free quota exhausted" used to *switch off* the
+  `warnings.warn` nudge — the one thing on this path a human actually reads.
+  A caller's second session therefore produced a bare `HpsiMcpPaymentError`
+  traceback recommending a crypto wallet, and nothing else. 402 now warns the
+  same way 429 does.
+
+* `HpsiMcpPaymentError`'s message and both rate-limit warnings now lead with
+  `client.register_account(email=...)` rather than a URL or a wallet. It is
+  the only option here that a running process can take on its own: no wallet,
+  no browser, no second person. The wallet and the signup URL still follow.
+
+* **Running from source reports a real version again.** With no installed
+  distribution to read, `__version__` fell back to `"0.0.0"` — which reached
+  the API in `X-HPSILAB-Version` and the User-Agent, leaving vendored-source
+  callers unversioned in the logs. The fallback is now `"<version>+source"`,
+  which keeps that case distinguishable without throwing the version away.
+
 ## v0.8.0 - 2026-07-31
 
 ### Added

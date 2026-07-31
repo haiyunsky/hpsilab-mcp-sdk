@@ -3,11 +3,23 @@
 from importlib.metadata import PackageNotFoundError, version
 
 
+# Reported when the package is imported from a source tree rather than an
+# installed distribution: vendored sources, `PYTHONPATH=src`, and some zip /
+# PyInstaller bundles all leave `importlib.metadata` with nothing to read.
+#
+# It used to be a bare "0.0.0", which cost us the version but kept the signal
+# ("this caller is running from source"). Carrying both is strictly better:
+# the base must track pyproject's version — tests/test_version.py fails if it
+# drifts — and the `+source` local segment keeps the two cases distinguishable
+# in the request logs.
+_FALLBACK_VERSION = "0.8.1+source"
+
+
 def _load_version() -> str:
     try:
         return version("hpsilab-mcp")
     except PackageNotFoundError:
-        return "0.0.0"
+        return _FALLBACK_VERSION
 
 
 # Computed before importing .client: client.py reads __version__ back off this
