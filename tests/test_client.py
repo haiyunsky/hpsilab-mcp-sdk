@@ -242,6 +242,93 @@ class HpsiMcpClientTests(unittest.TestCase):
         self.assertIn("hpsilab.com/register?src=flat", str(caught[0].message))
         client.close()
 
+    def test_rate_limit_error_carries_full_backend_body_as_structured_fields(self) -> None:
+        # Backend is the single source of truth for the 429 contract
+        # (docs/429-401-error-contract-spec.md) - every field it sends must
+        # be reachable on the raised exception, not just message/status_code.
+        body = {
+            "error": "tool_quota_exceeded",
+            "tool": "get_ai_prediction",
+            "message": "Your plan includes 30 get_ai_prediction calls per day.",
+            "error_message": "Your plan includes 30 get_ai_prediction calls per day.",
+            "limit": 30,
+            "window": "day",
+            "upgrade": {
+                "message": "Register free for 3x the quota: https://hpsilab.com/register",
+                "register_url": "https://hpsilab.com/register",
+                "pricing_url": "https://hpsilab.com/pricing",
+            },
+            "register": "https://hpsilab.com/register",
+            "upgrade_hint": "Upgrade at https://hpsilab.com/pricing",
+        }
+        client = HpsiMcpClient(
+            api_key="hpsi_test_key",  # avoid the anon-rate-limit warning noise
+            transport=httpx.MockTransport(lambda request: httpx.Response(429, json=body)),
+        )
+
+        with self.assertRaises(HpsiMcpRateLimitError) as context:
+            client.get_ai_prediction("NVDA")
+
+        error = context.exception
+        self.assertEqual(error.tool, "get_ai_prediction")
+        self.assertEqual(error.limit, 30)
+        self.assertEqual(error.window, "day")
+        self.assertEqual(error.register_url, "https://hpsilab.com/register")
+        self.assertEqual(error.pricing_url, "https://hpsilab.com/pricing")
+        self.assertEqual(error.upgrade_message, "Register free for 3x the quota: https://hpsilab.com/register")
+        self.assertEqual(error.register, "https://hpsilab.com/register")
+        self.assertEqual(error.upgrade_hint, "Upgrade at https://hpsilab.com/pricing")
+        # Nothing lost even beyond the promoted attributes.
+        self.assertEqual(error.body, body)
+        client.close()
+
+    def test_auth_error_carries_conversion_fields_for_no_credentials_401(self) -> None:
+        # NotAuthenticatedError shape (backend/app/dependencies/auth.py) - the
+        # only 401 that should carry a registration nudge.
+        body = {
+            "error": "not_authenticated",
+            "detail": "Not authenticated",
+            "error_message": "Not authenticated",
+            "upgrade": {
+                "message": "This feature requires an account. Register for free access, or upgrade to Pro for advanced analytics.",
+                "register_url": "https://hpsilab.com/register",
+                "pricing_url": "https://hpsilab.com/pricing",
+            },
+        }
+        client = HpsiMcpClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body))
+        )
+
+        with self.assertRaises(HpsiMcpAuthError) as context:
+            client.get_equity_curve("NVDA")
+
+        error = context.exception
+        self.assertEqual(error.register_url, "https://hpsilab.com/register")
+        self.assertEqual(error.pricing_url, "https://hpsilab.com/pricing")
+        self.assertEqual(
+            error.upgrade_message,
+            "This feature requires an account. Register for free access, or upgrade to Pro for advanced analytics.",
+        )
+        self.assertEqual(error.body, body)
+        client.close()
+
+    def test_auth_error_has_no_conversion_fields_for_invalid_token(self) -> None:
+        body = {"detail": "Invalid or expired token"}
+        client = HpsiMcpClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body))
+        )
+
+        with self.assertRaises(HpsiMcpAuthError) as context:
+            client.get_equity_curve("NVDA")
+
+        error = context.exception
+        self.assertIsNone(error.register_url)
+        self.assertIsNone(error.pricing_url)
+        self.assertIsNone(error.upgrade_message)
+        # `body` still carries the (trivial) raw response - lossless either way.
+        self.assertEqual(error.body, body)
+        client.close()
+
     def test_authenticated_client_does_not_warn_on_rate_limit(self) -> None:
         client = HpsiMcpClient(
             api_key="test-key",

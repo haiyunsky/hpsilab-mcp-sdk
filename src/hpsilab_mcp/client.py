@@ -351,10 +351,16 @@ class HpsiMcpClient:
 
         message = self._error_message(response)
         if response.status_code in {401, 403}:
+            body = self._response_body(response)
+            conv = self._conversion_fields(body)
             raise HpsiMcpAuthError(
                 message,
                 status_code=response.status_code,
                 response_text=response.text,
+                body=body,
+                register_url=conv["register_url"],
+                pricing_url=conv["pricing_url"],
+                upgrade_message=conv["upgrade_message"],
             )
         if response.status_code == 402:
             error = self._payment_error(message, response)
@@ -364,10 +370,24 @@ class HpsiMcpClient:
         if response.status_code == 429:
             if self._api_key is None:
                 self._warn_anon_rate_limited(response)
+            body = self._response_body(response)
+            conv = self._conversion_fields(body)
+            tool = body.get("tool")
+            limit = body.get("limit")
+            window = body.get("window")
             raise HpsiMcpRateLimitError(
                 message,
                 status_code=response.status_code,
                 response_text=response.text,
+                body=body,
+                tool=tool if isinstance(tool, str) else None,
+                limit=limit if isinstance(limit, int) and not isinstance(limit, bool) else None,
+                window=window if isinstance(window, str) else None,
+                register_url=conv["register_url"],
+                pricing_url=conv["pricing_url"],
+                upgrade_message=conv["upgrade_message"],
+                register=body.get("register") if isinstance(body.get("register"), str) else None,
+                upgrade_hint=body.get("upgrade_hint") if isinstance(body.get("upgrade_hint"), str) else None,
             )
         raise HpsiMcpAPIError(
             message,
@@ -446,6 +466,43 @@ class HpsiMcpClient:
             if isinstance(detail, str) and detail:
                 return detail
         return f"API request failed with status {response.status_code}."
+
+    def _response_body(self, response: httpx.Response) -> dict:
+        """Parsed JSON body, or `{}` for anything that isn't a JSON object —
+        never raises. Feeds `HpsiMcpAuthError.body`/`HpsiMcpRateLimitError.body`
+        so the complete backend response survives on the raised exception even
+        for fields not promoted to a named attribute."""
+        try:
+            body = response.json()
+        except ValueError:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def _conversion_fields(self, body: dict) -> dict:
+        """Extract register_url/pricing_url/upgrade_message from either shape
+        the backend may send: the nested `upgrade.{register_url,pricing_url,
+        message}` (preferred when present), or the flat `register`/
+        `upgrade_hint` fallback. Mirrors
+        mcp_server/errors.py::_conversion_from_response so the two stay in
+        sync (docs/429-401-error-contract-spec.md section 1.3)."""
+        upgrade = body.get("upgrade")
+        upgrade = upgrade if isinstance(upgrade, dict) else {}
+
+        register_url = upgrade.get("register_url")
+        if not (isinstance(register_url, str) and register_url):
+            register_url = body.get("register")
+
+        pricing_url = upgrade.get("pricing_url")
+
+        upgrade_message = upgrade.get("message")
+        if not (isinstance(upgrade_message, str) and upgrade_message):
+            upgrade_message = body.get("upgrade_hint")
+
+        return {
+            "register_url": register_url if isinstance(register_url, str) and register_url else None,
+            "pricing_url": pricing_url if isinstance(pricing_url, str) and pricing_url else None,
+            "upgrade_message": upgrade_message if isinstance(upgrade_message, str) and upgrade_message else None,
+        }
 
     def _register_url_from_response(self, response: httpx.Response) -> str:
         """Read the register URL the backend attached to this response, or
