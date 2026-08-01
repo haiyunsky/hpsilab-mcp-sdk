@@ -142,6 +142,22 @@ already belongs to a different account raises `HpsiMcpAPIError` with status
 Pass `adopt_key=False` to get the response without switching this client over
 — useful when you mean to hand the key to another process.
 
+### Lost the verification email?
+
+An unverified account stays on the anonymous daily allowance — the pool
+number you started with, not the full Free plan — until the link in that
+email is confirmed. If the email never arrived or the link expired, request
+a new one instead of registering again:
+
+```python
+client.resend_verification_email()
+```
+
+Requires a real account key (one you already have, or just adopted via
+`register_account()`) — an anonymous caller has nothing to verify. The
+backend enforces a short cooldown between resends; calling it again too soon
+raises `HpsiMcpRateLimitError`.
+
 ## Paying past the free quota
 
 Once the pool is spent — or when calling a Pro tool, which has no anonymous

@@ -228,6 +228,30 @@ class HpsiMcpClient:
                 self._client.headers["Authorization"] = f"Bearer {key}"
         return payload
 
+    def resend_verification_email(self) -> Any:
+        """Ask the backend to re-send this account's verification email.
+
+        Only meaningful for a caller already holding a real account key
+        (either passed as `api_key=` or adopted via `register_account()`) —
+        an anonymous caller has no account to verify, and this raises
+        `HpsiMcpAuthError` in that case, same as any other authenticated
+        endpoint would. This is what a bound-but-unverified caller's 429
+        (`HpsiMcpRateLimitError`) is pointing at: the daily pool stays at the
+        anonymous rate until the account is verified, and there is no signup
+        step left to offer — verifying is the only lever.
+
+        Raises `HpsiMcpRateLimitError` (429) if you already requested one
+        recently — the backend enforces a short cooldown between resends.
+        """
+        response = self._send(
+            "POST",
+            "/api/auth/resend-verification",
+            params=None,
+            tool_name="resend_verification_email",
+        )
+        self._raise_for_status(response)
+        return self._decode_json(response)
+
     def _tool_headers(self, tool_name: Optional[str]) -> Optional[dict]:
         """Per-request override merged on top of the client's default headers
         (see `build_tracking_headers`) — only `X-HPSILAB-Tool` varies per call,

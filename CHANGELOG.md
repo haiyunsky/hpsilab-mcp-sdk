@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.10.0 - 2026-08-01
+
+### Added
+
+* **`client.resend_verification_email()`** — for a caller already holding a
+  real (bound but unverified) account key. A bound-but-unverified account's
+  daily pool stays at the anonymous rate until the email is confirmed, and
+  the 429 that reports this now points here instead of
+  `https://hpsilab.com/settings` — that page has no resend-verification
+  feature (API key / watchlist / subscription only), a dead end for a script
+  with no browser session. This wraps `POST /api/auth/resend-verification`,
+  which takes a bearer token, so it's reachable from a running process.
+  Raises `HpsiMcpRateLimitError` if you already requested one recently (the
+  backend enforces a short cooldown).
+
 ## v0.9.0 - 2026-08-01
 
 ### Added
