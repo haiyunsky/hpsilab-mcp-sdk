@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.10.1 - 2026-08-01
+
+### Changed
+
+* **`resend_verification_email()`'s docstring and the README now match what
+  the backend actually does.** A quantum_app-side fix shipped after v0.10.0
+  made `POST /api/auth/resend-verification` also resolve a caller with **no
+  token at all** via the same fingerprint lookup `register_account()` uses —
+  the docs here still said a real account key was required and an anonymous
+  caller would get `HpsiMcpAuthError`. No code change on this side; the SDK
+  already just posts to the endpoint and lets the backend decide. Purely
+  catching the docs up to backend behavior that moved out from under them.
+
 ## v0.10.0 - 2026-08-01
 
 ### Added

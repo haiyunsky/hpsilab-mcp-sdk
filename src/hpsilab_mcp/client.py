@@ -231,11 +231,18 @@ class HpsiMcpClient:
     def resend_verification_email(self) -> Any:
         """Ask the backend to re-send this account's verification email.
 
-        Only meaningful for a caller already holding a real account key
-        (either passed as `api_key=` or adopted via `register_account()`) —
-        an anonymous caller has no account to verify, and this raises
-        `HpsiMcpAuthError` in that case, same as any other authenticated
-        endpoint would. This is what a bound-but-unverified caller's 429
+        Works with a real account key (passed as `api_key=` or adopted via
+        `register_account()`) — but also works with **no key at all**, for a
+        header-less caller whose fingerprint the backend already bound to an
+        account via an earlier `register_account()` call (possibly in a
+        different process — an MCP agent has no way to carry that call's key
+        forward, since an LLM cannot rewrite its own connection's
+        Authorization header). The backend tries the real token first and
+        falls back to the same fingerprint lookup `register_account()`
+        itself uses; only a caller with neither a matching token nor a bound
+        fingerprint gets `HpsiMcpAuthError`.
+
+        This is what a bound-but-unverified caller's 429
         (`HpsiMcpRateLimitError`) is pointing at: the daily pool stays at the
         anonymous rate until the account is verified, and there is no signup
         step left to offer — verifying is the only lever.

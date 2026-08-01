@@ -153,10 +153,16 @@ a new one instead of registering again:
 client.resend_verification_email()
 ```
 
-Requires a real account key (one you already have, or just adopted via
-`register_account()`) — an anonymous caller has nothing to verify. The
-backend enforces a short cooldown between resends; calling it again too soon
-raises `HpsiMcpRateLimitError`.
+Works with a real account key (one you already have, or just adopted via
+`register_account()`). It also works with **no key at all**, for a
+header-less caller whose fingerprint the backend already bound to an
+account — MCP agents can't carry a key forward from an earlier
+`register_account()` call (an LLM cannot rewrite its own connection's
+`Authorization` header), so the backend falls back to the same fingerprint
+lookup `register_account()` itself uses. Only a caller with neither a
+matching token nor a bound fingerprint gets `HpsiMcpAuthError`. The backend
+enforces a short cooldown between resends; calling it again too soon raises
+`HpsiMcpRateLimitError`.
 
 ## Paying past the free quota
 
