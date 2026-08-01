@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.9.0 - 2026-08-01
+
+### Added
+
+* **`HpsiMcpRateLimitError` and `HpsiMcpAuthError` now carry the backend's
+  full 429/401 response as structured attributes**, not just `message`/
+  `status_code`/`response_text`. Backend is the single source of truth for
+  the 429/401 contract (see quantum_app's
+  `docs/429-401-error-contract-spec.md`); this SDK layer promotes it into
+  attributes instead of making every caller re-parse `response_text` JSON by
+  hand.
+
+  * `HpsiMcpRateLimitError`: `tool`, `limit`, `window`, `register_url`,
+    `pricing_url`, `upgrade_message`, and the backend's original flat
+    `register`/`upgrade_hint` strings.
+  * `HpsiMcpAuthError`: `register_url`, `pricing_url`, `upgrade_message` — all
+    three are `None` for anything other than a 401 with no credentials sent
+    at all (an expired token, or a 403, never carries a registration nudge —
+    that is intentional, not a gap).
+  * Both, plus every other `HpsiMcpAPIError` subclass, gain `.body` — the
+    parsed response, verbatim — so a field not promoted to a named attribute
+    is still reachable without a future SDK release, mirroring the existing
+    `HpsiMcpPaymentError.accepts`/`.tool`/`.price` pattern.
+
+```python
+try:
+    client.get_ai_prediction("NVDA")
+except HpsiMcpRateLimitError as exc:
+    print(exc.tool, exc.limit, exc.window)   # get_ai_prediction 10 day
+    print(exc.register_url, exc.pricing_url) # https://hpsilab.com/register ...
+```
+
 ## v0.8.2 - 2026-07-31
 
 ### Changed

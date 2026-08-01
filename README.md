@@ -91,6 +91,28 @@ its credential is never displaced and `anon_key` stays `None`.
 Binding an email to the key unlocks the full Free plan:
 <https://hpsilab.com/register>
 
+### Reading a 429/401 without re-parsing JSON
+
+A `429` that survives the automatic key-adopt-and-retry above raises
+`HpsiMcpRateLimitError` with the backend's fields promoted onto it — no need
+to parse `response_text` yourself:
+
+```python
+from hpsilab_mcp import HpsiMcpRateLimitError
+
+try:
+    client.get_ai_prediction("NVDA")
+except HpsiMcpRateLimitError as exc:
+    print(exc.tool, exc.limit, exc.window)     # get_ai_prediction 10 day
+    print(exc.register_url, exc.pricing_url)   # where to register / upgrade
+    print(exc.body)                            # the full raw response, if needed
+```
+
+`HpsiMcpAuthError` (401/403) carries the same `register_url`/`pricing_url`/
+`upgrade_message` — but only when the 401 means "no credentials sent at all".
+An expired token, or a 403, leaves all three `None`: you already have an
+account, so the SDK does not suggest registering one.
+
 ## Registering your own account (for agents)
 
 An agent can complete the whole anonymous → account transition itself. No
