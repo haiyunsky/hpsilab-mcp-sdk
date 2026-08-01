@@ -94,6 +94,24 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertIn("Free API key required", message)
         client.close()
 
+    def test_402_warning_reads_flat_register_field_when_no_upgrade_dict(self) -> None:
+        # A 402 challenge body carrying the newer flat `register` string
+        # instead of (or in addition to) a nested `upgrade` object must still
+        # steer the warning at the right URL.
+        challenge = {**CHALLENGE, "register": "https://hpsilab.com/register?src=flat"}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(402, json=challenge)
+
+        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+
+        with self.assertWarns(UserWarning) as warned:
+            with self.assertRaises(HpsiMcpPaymentError):
+                client.get_monte_carlo("NVDA")
+
+        self.assertIn("hpsilab.com/register?src=flat", str(warned.warning))
+        client.close()
+
     def test_402_stays_quiet_for_a_caller_with_its_own_key(self) -> None:
         """An account holder's 402 is a plan question, not an onboarding one —
         telling them to register would be noise. Mirrors the 429 branch."""

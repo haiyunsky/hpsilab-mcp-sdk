@@ -193,6 +193,55 @@ class HpsiMcpClientTests(unittest.TestCase):
         self.assertIn("hpsilab.com/register", str(caught[0].message))
         client.close()
 
+    def test_anon_rate_limit_warning_reads_register_url_from_the_response_body(self) -> None:
+        # The URL here deliberately differs from the hardcoded fallback so the
+        # assertion can't pass just because the two happen to match.
+        client = HpsiMcpClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    429,
+                    json={
+                        "message": "Daily limit reached.",
+                        "upgrade": {"register_url": "https://hpsilab.com/register?src=eu"},
+                    },
+                )
+            )
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpRateLimitError):
+                client.get_equity_curve("NVDA")
+
+        self.assertEqual(len(caught), 1)
+        self.assertIn("hpsilab.com/register?src=eu", str(caught[0].message))
+        client.close()
+
+    def test_anon_rate_limit_warning_falls_back_to_flat_register_field(self) -> None:
+        # No nested `upgrade` object at all — only the newer flat `register`
+        # string (backend/app/middleware/rate_limit.py::_CONVERSION_LINKS).
+        client = HpsiMcpClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    429,
+                    json={
+                        "message": "Daily limit reached.",
+                        "register": "https://hpsilab.com/register?src=flat",
+                        "upgrade_hint": "Upgrade at https://hpsilab.com/pricing",
+                    },
+                )
+            )
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpRateLimitError):
+                client.get_equity_curve("NVDA")
+
+        self.assertEqual(len(caught), 1)
+        self.assertIn("hpsilab.com/register?src=flat", str(caught[0].message))
+        client.close()
+
     def test_authenticated_client_does_not_warn_on_rate_limit(self) -> None:
         client = HpsiMcpClient(
             api_key="test-key",

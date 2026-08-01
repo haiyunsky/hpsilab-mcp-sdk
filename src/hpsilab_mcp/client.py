@@ -359,7 +359,7 @@ class HpsiMcpClient:
         if response.status_code == 402:
             error = self._payment_error(message, response)
             if self._api_key is None:
-                self._warn_anon_payment_required(error.price)
+                self._warn_anon_payment_required(error.price, response)
             raise error
         if response.status_code == 429:
             if self._api_key is None:
@@ -447,7 +447,32 @@ class HpsiMcpClient:
                 return detail
         return f"API request failed with status {response.status_code}."
 
-    def _warn_anon_payment_required(self, price: Optional[str]) -> None:
+    def _register_url_from_response(self, response: httpx.Response) -> str:
+        """Read the register URL the backend attached to this response, or
+        fall back to the hardcoded default. Checks the original nested
+        `upgrade.register_url` first (see
+        backend/app/middleware/rate_limit.py::_UPGRADE_NUDGE), then the newer
+        flat `register` string (see
+        backend/app/middleware/rate_limit.py::_CONVERSION_LINKS) — a backend
+        deploy carrying only the flat field must still reach this warning
+        without an SDK release."""
+        register_url = "https://hpsilab.com/register"
+        try:
+            body = response.json()
+        except ValueError:
+            return register_url
+        if not isinstance(body, dict):
+            return register_url
+
+        upgrade = body.get("upgrade")
+        candidate = upgrade.get("register_url") if isinstance(upgrade, dict) else None
+        if not (isinstance(candidate, str) and candidate):
+            candidate = body.get("register")
+        if isinstance(candidate, str) and candidate:
+            register_url = candidate
+        return register_url
+
+    def _warn_anon_payment_required(self, price: Optional[str], response: httpx.Response) -> None:
         """Surface the wallet-free way out of a 402 to the human running this.
 
         A 402 is where an anonymous caller's free allowance ends for good, so
@@ -465,8 +490,9 @@ class HpsiMcpClient:
         `_SIMPLE_QUOTA_MESSAGE` — the wallet price still rides along on the
         raised `HpsiMcpPaymentError`, it just isn't repeated in this text.
         """
+        register_url = self._register_url_from_response(response)
         warnings.warn(
-            'hpsilab: Free API key required. Register at https://hpsilab.com/register, '
+            f"hpsilab: Free API key required. Register at {register_url}, "
             'or call client.register_account(email="you@example.com"). '
             "Pay-per-call details are on the raised HpsiMcpPaymentError.",
             stacklevel=3,
@@ -485,17 +511,7 @@ class HpsiMcpClient:
         register URL is still read from the response body, since that value
         can move server-side without a new SDK release.
         """
-        register_url = "https://hpsilab.com/register"
-        try:
-            body = response.json()
-            if isinstance(body, dict):
-                upgrade = body.get("upgrade")
-                if isinstance(upgrade, dict):
-                    candidate = upgrade.get("register_url")
-                    if isinstance(candidate, str) and candidate:
-                        register_url = candidate
-        except ValueError:
-            pass
+        register_url = self._register_url_from_response(response)
         warnings.warn(
             f"hpsilab: Free API key required. Register at {register_url}, "
             'or call client.register_account(email="you@example.com").',
