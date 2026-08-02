@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 # the base must track pyproject's version — tests/test_version.py fails if it
 # drifts — and the `+source` local segment keeps the two cases distinguishable
 # in the request logs.
-_FALLBACK_VERSION = "0.10.1+source"
+_FALLBACK_VERSION = "0.11.0+source"
 
 
 def _load_version() -> str:
@@ -27,10 +27,11 @@ def _load_version() -> str:
 # circular (partially-initialized module) if it ran before this is set.
 __version__ = _load_version()
 
-from .client import HpsiMcpClient
+from .client import HpsiMcpClient, register
 from .errors import (
     HpsiMcpAPIError,
     HpsiMcpAuthError,
+    HpsiMcpConfigError,
     HpsiMcpConnectionError,
     HpsiMcpError,
     HpsiMcpPaymentError,
@@ -44,6 +45,7 @@ __all__ = [
     "HpsiMcpAPIError",
     "HpsiMcpAuthError",
     "HpsiMcpClient",
+    "HpsiMcpConfigError",
     "HpsiMcpConnectionError",
     "HpsiMcpError",
     "HpsiMcpPaymentError",
@@ -52,4 +54,5 @@ __all__ = [
     "HpsiMcpTimeoutError",
     "X402Wallet",
     "__version__",
+    "register",
 ]

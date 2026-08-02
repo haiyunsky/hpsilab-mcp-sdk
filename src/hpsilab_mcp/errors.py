@@ -9,6 +9,16 @@ class HpsiMcpError(Exception):
     """Base exception for SDK errors."""
 
 
+class HpsiMcpConfigError(HpsiMcpError):
+    """Raised for a client misconfiguration caught before any request is
+    sent — currently just `HpsiMcpClient()` built with neither `api_key` nor
+    a resolvable wallet. Anonymous free access was retired (API key is
+    mandatory), so there is no HTTP response to attach; this is a plain
+    programming-error signal, not `HpsiMcpAPIError` and its status_code/
+    response_text/body fields, which all assume a request was actually sent.
+    """
+
+
 class HpsiMcpConnectionError(HpsiMcpError):
     """Raised when a request fails before the API returns a response."""
 

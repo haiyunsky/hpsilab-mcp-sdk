@@ -23,10 +23,17 @@ pip install "hpsilab-mcp[x402]"
 
 ## Quick Start
 
+API key is mandatory: `HpsiMcpClient()` needs either a real `api_key` or a
+configured `wallet=` to even construct — there is no more anonymous free
+access. A brand-new caller with neither should register first, with no
+client instance needed:
+
 ```python
+import hpsilab_mcp
 from hpsilab_mcp import HpsiMcpClient
 
-client = HpsiMcpClient()
+result = hpsilab_mcp.register(email="you@example.com")
+client = HpsiMcpClient(api_key=result["api_key"])
 
 calls = {
     "analyze_stock": client.analyze_stock("NVDA"),
@@ -45,8 +52,11 @@ print(calls["analyze_stock"])
 
 ## Authentication
 
-<!-- TODO(Haiyun): confirm current tiering before publishing — see note below -->
-All listed REST SDK methods are callable without an API key. The SDK does not block any method client-side; any access restrictions are enforced server-side.
+Every REST SDK method requires either a real account (`api_key=`) or a
+configured x402 `wallet=` (see [Paying without an
+account](#paying-without-an-account) below) — the SDK enforces this at
+construction time, before any request goes out, rather than letting an
+unauthenticated call reach the API and fail there.
 
 ```python
 from hpsilab_mcp import HpsiMcpClient
@@ -60,42 +70,10 @@ result = client.get_ai_prediction("TSLA")
 print(result)
 ```
 
-Pass an `api_key` to raise rate limits or unlock account-specific features, where applicable.
-
-## Your free API key, picked up automatically
-
-Anonymous callers share one daily pool across all tools. On your first
-successful call the API issues a **free key** and this client adopts it
-automatically — every later request carries it, which raises the daily
-allowance substantially. Nothing to configure.
-
-```python
-client = HpsiMcpClient()
-client.get_monte_carlo("NVDA")
-client.anon_key          # 'hpsi_anon_...' — issued and now in use
-```
-
-Persist it and hand it back to keep the larger allowance in a later process.
-The key is not tied to your IP address, which matters because cloud egress
-addresses drift:
-
-```python
-client = HpsiMcpClient(anon_key=saved_key)
-```
-
-If you hit the anonymous ceiling before a key was in play, the `429` carries
-one; the client adopts it and retries the call once, so you get data rather
-than an exception. A client constructed with a real `api_key` is unaffected —
-its credential is never displaced and `anon_key` stays `None`.
-
-Binding an email to the key unlocks the full Free plan:
-<https://hpsilab.com/register>
-
 ### Reading a 429/401 without re-parsing JSON
 
-A `429` that survives the automatic key-adopt-and-retry above raises
-`HpsiMcpRateLimitError` with the backend's fields promoted onto it — no need
-to parse `response_text` yourself:
+A `429` (rate limit / quota exceeded) raises `HpsiMcpRateLimitError` with the
+backend's fields promoted onto it — no need to parse `response_text` yourself:
 
 ```python
 from hpsilab_mcp import HpsiMcpRateLimitError
@@ -103,7 +81,7 @@ from hpsilab_mcp import HpsiMcpRateLimitError
 try:
     client.get_ai_prediction("NVDA")
 except HpsiMcpRateLimitError as exc:
-    print(exc.tool, exc.limit, exc.window)     # get_ai_prediction 10 day
+    print(exc.tool, exc.limit, exc.window)     # get_ai_prediction 30 day
     print(exc.register_url, exc.pricing_url)   # where to register / upgrade
     print(exc.body)                            # the full raw response, if needed
 ```
@@ -115,71 +93,71 @@ account, so the SDK does not suggest registering one.
 
 ## Registering your own account (for agents)
 
-An agent can complete the whole anonymous → account transition itself. No
-password, no wallet, no web form:
+No client instance needed — this is the entry point for a caller that has
+neither an `api_key` nor a wallet yet. No password, no web form:
 
 ```python
-client = HpsiMcpClient()
-client.register_account("you@example.com")
+import hpsilab_mcp
+from hpsilab_mcp import HpsiMcpClient
+
+result = hpsilab_mcp.register(email="you@example.com")
+print(result["api_key"])
+
+client = HpsiMcpClient(api_key=result["api_key"])
 client.get_monte_carlo("NVDA")     # now metered as your account
 ```
 
-The client switches to the returned account key automatically, and the account
-is *also* bound to this caller server-side — so a process that cannot change
-its own `Authorization` header (an MCP connection, for instance) is still
-recognised on later calls.
+The account is *also* bound to this caller server-side — so a process that
+cannot change its own `Authorization` header (an MCP connection, for
+instance) is still recognised on later calls made from the same caller.
 
-The account starts unverified, which keeps the anonymous daily allowance until
-the emailed link is confirmed; confirming it unlocks the full Free plan. Use a
-real address — one nobody reads leaves the account at the anonymous allowance
-forever.
+The account starts unverified, which keeps the anon-rate daily allowance
+until the emailed link is confirmed; confirming it unlocks the full Free
+plan. Use a real address — one nobody reads leaves the account at that lower
+allowance forever.
 
-Calling again returns the same account and a fresh key rather than creating a
-second one, so it is safe to call when you have lost your key. An address that
-already belongs to a different account raises `HpsiMcpAPIError` with status
-`409`, leaving your current identity untouched.
+Calling `hpsilab_mcp.register()` again with the same email returns the same
+account and a fresh key rather than creating a second one, so it is safe to
+call when you have lost your key. An address that already belongs to a
+different account raises `HpsiMcpAPIError` with status `409`.
 
-Pass `adopt_key=False` to get the response without switching this client over
-— useful when you mean to hand the key to another process.
+Already have a client constructed (typically wallet-only, via `wallet=`) and
+want it to also have an account? `HpsiMcpClient.register_account(email)` is
+the same registration, as an instance method — it switches the client over to
+the new key automatically. Pass `adopt_key=False` to get the response without
+switching, e.g. to hand the key to another process instead.
 
 ### Lost the verification email?
 
-An unverified account stays on the anonymous daily allowance — the pool
-number you started with, not the full Free plan — until the link in that
-email is confirmed. If the email never arrived or the link expired, request
-a new one instead of registering again:
+An unverified account stays on the anon-rate daily allowance — not the full
+Free plan — until the link in that email is confirmed. If the email never
+arrived or the link expired, request a new one instead of registering again:
 
 ```python
 client.resend_verification_email()
 ```
 
-Works with a real account key (one you already have, or just adopted via
-`register_account()`). It also works with **no key at all**, for a
-header-less caller whose fingerprint the backend already bound to an
-account — MCP agents can't carry a key forward from an earlier
-`register_account()` call (an LLM cannot rewrite its own connection's
-`Authorization` header), so the backend falls back to the same fingerprint
-lookup `register_account()` itself uses. Only a caller with neither a
-matching token nor a bound fingerprint gets `HpsiMcpAuthError`. The backend
-enforces a short cooldown between resends; calling it again too soon raises
-`HpsiMcpRateLimitError`.
+Requires a real account key (`api_key=`, or whatever `register_account()`
+just adopted) — a wallet-only client, or one with an invalid/expired key, gets
+`HpsiMcpAuthError` instead: there's no more fingerprint-based fallback for a
+header-less caller (API key is mandatory now, and fingerprint binding was
+itself a no-key-needed identity — closed along with the rest of anonymous
+access). The backend also enforces a short cooldown between resends; calling
+it again too soon raises `HpsiMcpRateLimitError`.
 
-## Paying past the free quota
+## Paying without an account
 
-Once the pool is spent — or when calling a Pro tool, which has no anonymous
-allowance — the API answers **HTTP 402** with an [x402](https://x402.org)
+Calling a tool with no `api_key` — a `wallet=` alone is enough to construct a
+client — the API answers **HTTP 402** with an [x402](https://x402.org)
 payment challenge instead of refusing outright, so an agent can pay for the
-call in USDC on Base and keep working.
+call in USDC on Base and keep working without ever registering.
 
-**You do not need a wallet.** Every challenge also names a card checkout URL
-(`https://hpsilab.com/pricing?anon=...`) — relay it to a human if you have no
-USDC. That rail is register-then-pay, and `register_account()` above lets you
-do the registration half unattended.
-
-Before that point, an exhausted caller is served the **last known-good result
-for the same request** rather than an empty error — a `200` carrying
-`X-HPSILAB-Degraded: true` and `X-HPSILAB-Data-Age`. Treat those figures as
-indicative, not current.
+**You do not need a wallet either**, if you'd rather register instead — see
+[Registering your own account](#registering-your-own-account-for-agents)
+above; it needs no wallet and no browser, and resolves this within the
+running process. Every 402 challenge also names a card checkout URL
+(`https://hpsilab.com/pricing?anon=...`) for a human to pay with a card
+instead, if neither a wallet nor unattended registration fits.
 
 Without a wallet the SDK raises `HpsiMcpPaymentError` with the challenge
 attached, and you can pay it however you like:
@@ -200,14 +178,17 @@ With a wallet, the client signs the challenge and repeats the request for you:
 from hpsilab_mcp import HpsiMcpClient, X402Wallet
 
 client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
-client.get_monte_carlo("NVDA")   # free while quota lasts, paid after that
+client.get_monte_carlo("NVDA")   # no account needed — paid per call
 ```
 
 `X402Wallet()` reads `HPSILAB_X402_PRIVATE_KEY` when no key is passed, and a
-client with no `wallet=` picks that variable up automatically. Three things
-hold regardless of how it is configured:
+client with no `wallet=` picks that variable up automatically (an `api_key=`
+still satisfies construction on its own either way — a wallet is only
+required when there's no `api_key`). Three things hold regardless of how it
+is configured:
 
-* Nothing is paid pre-emptively — the free call is always attempted first.
+* Nothing is paid pre-emptively — the call is always attempted first, and
+  only pays if the response comes back 402.
 * Each call is retried **once** after paying; a server that keeps answering
   402 cannot drain the wallet.
 * `max_price_usdc` (default `$1.00`) caps a single call. A challenge asking for

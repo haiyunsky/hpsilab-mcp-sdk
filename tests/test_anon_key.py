@@ -1,21 +1,31 @@
-"""Tests for automatic adoption of the server-issued anonymous key.
+"""Tests for the mandatory-identity constructor guard.
 
-Without this the SDK is the one channel that cannot participate in the
-anonymous-identity flow at all: the backend issues the key on a response
-*header*, and the SDK hands its caller only the decoded JSON body.
+Anonymous free access was retired (mandatory-API-key plan): `HpsiMcpClient()`
+now requires either a real `api_key` or a configured `wallet` before it will
+even construct. This file used to test automatic adoption of a
+server-issued anonymous key — that flow (and the header it rode on) no
+longer exists, since the backend never issues one to the MCP/SDK channel
+anymore. What's still meaningful from the old behavior — the 402/429 warning
+text, malformed-body handling — is kept below, adapted to a real-account or
+wallet-only client instead of an anonymous one.
 """
-import json
 import warnings
 
 import httpx
 import pytest
 
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpRateLimitError
-from hpsilab_mcp.client import ANON_KEY_HEADER, ANONYMOUS_READONLY_HEADER
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError, HpsiMcpRateLimitError
 
-KEY = "hpsi_anon_" + "a" * 48
-OTHER_KEY = "hpsi_anon_" + "b" * 48
 _PAYLOAD = {"ticker": "AAPL", "mean_price": 1.0}
+
+
+class _FakeWallet:
+    """Stands in for X402Wallet — the real one requires the optional [x402]
+    extra and a valid EVM private key just to construct, neither of which
+    this file's tests need. Only `payment_headers` is ever called on it."""
+
+    def payment_headers(self, response):
+        return {"X-PAYMENT": "signed-payload"}
 
 
 def _client(handler, **kwargs):
@@ -26,132 +36,80 @@ def _client(handler, **kwargs):
     )
 
 
-def _ok(headers=None):
-    return httpx.Response(200, json=_PAYLOAD, headers=headers or {})
+def _ok():
+    return httpx.Response(200, json=_PAYLOAD)
 
 
-def _pool_exhausted():
+def _quota_exceeded():
     body = {
         "error": "tool_quota_exceeded",
-        "message": f"Anonymous daily limit reached (30 calls/day). ... 'Authorization: Bearer {KEY}'",
-        "anon_key": KEY,
+        "message": "Free API key required. Register at https://hpsilab.com/register",
         "upgrade": {"register_url": "https://hpsilab.com/register"},
     }
     return httpx.Response(429, json=body)
 
 
-def test_key_from_a_successful_response_is_adopted():
+def test_construction_with_neither_api_key_nor_wallet_raises():
+    with pytest.raises(HpsiMcpConfigError):
+        HpsiMcpClient(base_url="http://testserver")
+
+
+def test_construction_with_only_an_api_key_succeeds():
     seen = []
 
     def handler(request):
         seen.append(request.headers.get("authorization"))
-        return _ok({ANON_KEY_HEADER: KEY})
-
-    with _client(handler) as client:
-        assert client.anon_key is None
-        client.get_monte_carlo("AAPL")
-        assert client.anon_key == KEY
-        client.get_monte_carlo("MSFT")
-
-    assert seen[0] is None                      # first call was unidentified
-    assert seen[1] == f"Bearer {KEY}"           # every later call carries it
-
-
-def test_pool_exhausted_429_adopts_the_key_and_retries_once():
-    calls = []
-
-    def handler(request):
-        calls.append(request.headers.get("authorization"))
-        if len(calls) == 1:
-            return _pool_exhausted()
         return _ok()
-
-    with _client(handler) as client:
-        result = client.get_monte_carlo("AAPL")
-
-    # The dead end became a served call, which is the entire point.
-    assert result == _PAYLOAD
-    assert calls == [None, f"Bearer {KEY}"]
-
-
-def test_an_exhausted_keyed_caller_still_fails_instead_of_looping():
-    calls = []
-
-    def handler(request):
-        calls.append(request.url.path)
-        return _pool_exhausted()
-
-    with _client(handler, anon_key=KEY) as client:
-        with pytest.raises(HpsiMcpRateLimitError):
-            client.get_monte_carlo("AAPL")
-
-    # Already had that key, so nothing new was adopted and nothing was retried.
-    assert len(calls) == 1
-
-
-def test_a_real_api_key_is_never_displaced_by_an_anonymous_one():
-    seen = []
-
-    def handler(request):
-        seen.append(request.headers.get("authorization"))
-        return _ok({ANON_KEY_HEADER: KEY})
 
     with _client(handler, api_key="hpsi_real_account_key") as client:
         client.get_monte_carlo("AAPL")
-        client.get_monte_carlo("MSFT")
-        assert client.anon_key is None
 
-    assert seen == ["Bearer hpsi_real_account_key"] * 2
+    assert seen == ["Bearer hpsi_real_account_key"]
 
 
-def test_a_persisted_key_is_sent_from_the_first_call():
-    seen = []
-
+def test_construction_with_only_a_wallet_succeeds():
     def handler(request):
-        seen.append(
-            (request.headers.get("authorization"), request.headers.get(ANONYMOUS_READONLY_HEADER))
-        )
         return _ok()
 
-    with _client(handler, anon_key=KEY) as client:
-        client.get_monte_carlo("AAPL")
-        assert client.anon_key == KEY
+    # No api_key at all — the wallet alone satisfies the constructor guard.
+    with _client(handler, wallet=_FakeWallet()) as client:
+        result = client.get_monte_carlo("AAPL")
 
-    # Still anonymous traffic, just identifiable: both headers travel together.
-    assert seen == [(f"Bearer {KEY}", "1")]
+    assert result == _PAYLOAD
 
 
-def test_a_rotated_key_replaces_the_old_one():
-    responses = [_ok({ANON_KEY_HEADER: KEY}), _ok({ANON_KEY_HEADER: OTHER_KEY}), _ok()]
-    seen = []
+def test_no_client_ever_sends_the_retired_anonymous_readonly_header():
+    seen_headers = []
 
     def handler(request):
-        seen.append(request.headers.get("authorization"))
-        return responses[len(seen) - 1]
+        seen_headers.append(dict(request.headers))
+        return _ok()
 
-    with _client(handler) as client:
-        client.get_monte_carlo("A")
-        client.get_monte_carlo("B")
-        client.get_monte_carlo("C")
-        assert client.anon_key == OTHER_KEY
+    with _client(handler, api_key="hpsi_real_account_key") as client:
+        client.get_monte_carlo("AAPL")
 
-    assert seen[2] == f"Bearer {OTHER_KEY}"
+    assert "x-mcp-anonymous-readonly" not in seen_headers[0]
 
 
 def test_malformed_429_body_does_not_crash_the_error_path():
     def handler(request):
         return httpx.Response(429, content=b"not json at all")
 
-    with _client(handler) as client:
+    with _client(handler, api_key="hpsi_real_account_key") as client:
         with pytest.raises(HpsiMcpRateLimitError):
             client.get_monte_carlo("AAPL")
 
 
-def test_keyed_caller_still_gets_the_unified_quota_warning():
-    def handler(request):
-        return _pool_exhausted()
+def test_a_wallet_only_caller_gets_the_unified_quota_warning_on_429():
+    """A wallet-only client (no api_key) can still hit a plain 429 — the
+    PAID_RPM burst ceiling, not the retired anonymous quota pool. The warning
+    still fires: `self._api_key is None` now means exactly "wallet-only",
+    which is precisely the caller this nudge is for."""
 
-    with _client(handler, anon_key=KEY) as client:
+    def handler(request):
+        return _quota_exceeded()
+
+    with _client(handler, wallet=_FakeWallet()) as client:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             with pytest.raises(HpsiMcpRateLimitError):

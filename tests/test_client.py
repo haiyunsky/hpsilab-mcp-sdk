@@ -6,10 +6,23 @@ import httpx
 from hpsilab_mcp import HpsiMcpClient
 from hpsilab_mcp.errors import HpsiMcpAuthError, HpsiMcpRateLimitError
 
+# Anonymous construction was retired — HpsiMcpClient() now requires an
+# api_key or a wallet. Most tests here don't care which identity is used,
+# only what the client does with a request/response, so a fixed dummy key is
+# enough; the few tests that specifically exercise the "no api_key" warning
+# path use _FakeWallet instead (a real X402Wallet needs the optional [x402]
+# extra and a valid EVM private key, neither of which these tests need).
+_KEY = "hpsi_test_key"
+
+
+class _FakeWallet:
+    def payment_headers(self, response):
+        return {"X-PAYMENT": "signed-payload"}
+
 
 class HpsiMcpClientTests(unittest.TestCase):
     def test_dir_exposes_actual_rest_methods_only(self) -> None:
-        client = HpsiMcpClient()
+        client = HpsiMcpClient(api_key=_KEY)
 
         methods = set(dir(client))
         rest_methods = {
@@ -34,7 +47,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             self.assertEqual(request.url.path, "/api/ai_prediction/NVDA")
             return httpx.Response(200, json={"symbol": "NVDA"})
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
 
         self.assertEqual(client.get_ai_prediction("NVDA"), {"symbol": "NVDA"})
         client.close()
@@ -46,7 +59,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             self.assertEqual(request.url.params["refresh"], "true")
             return httpx.Response(200, json={"symbol": "NVDA", "signal": "Bullish"})
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
 
         self.assertEqual(
             client.analyze_stock("NVDA", refresh=True),
@@ -60,7 +73,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             self.assertEqual(request.url.params["symbols"], "QBTS")
             return httpx.Response(200, json={"symbols": ["QBTS"]})
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
 
         self.assertEqual(client.get_iv_radar("QBTS"), {"symbols": ["QBTS"]})
         client.close()
@@ -72,7 +85,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             self.assertEqual(request.url.params["symbol"], "NVDA")
             return httpx.Response(200, json={"symbol": "NVDA", "risk": "low"})
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
 
         self.assertEqual(
             client.get_pretrade_risk_scan(" NVDA "),
@@ -88,7 +101,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             self.assertEqual(request.url.params["types"], "ai_prediction,iv_radar")
             return httpx.Response(200, json={"symbol": "NVDA", "images": []})
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
 
         self.assertEqual(
             client.generate_stock_images("NVDA", force=True, types=["ai_prediction", "iv_radar"]),
@@ -104,7 +117,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             self.assertEqual(request.url.params["force_images"], "true")
             return httpx.Response(200, json={"symbol": "NVDA", "markdown": "# NVDA"})
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
 
         self.assertEqual(
             client.generate_stock_research_report("NVDA", refresh=True, force_images=True),
@@ -127,9 +140,10 @@ class HpsiMcpClientTests(unittest.TestCase):
 
     def test_auth_error(self) -> None:
         client = HpsiMcpClient(
+            api_key=_KEY,
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(401, json={"detail": "Unauthorized"})
-            )
+            ),
         )
 
         with self.assertRaises(HpsiMcpAuthError) as context:
@@ -141,9 +155,10 @@ class HpsiMcpClientTests(unittest.TestCase):
 
     def test_rate_limit_error(self) -> None:
         client = HpsiMcpClient(
+            api_key=_KEY,
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(429, json={"message": "Too many requests"})
-            )
+            ),
         )
 
         with self.assertRaises(HpsiMcpRateLimitError) as context:
@@ -157,12 +172,13 @@ class HpsiMcpClientTests(unittest.TestCase):
         # Backend 429 bodies put a machine-readable code in `error` ahead of
         # the human-readable `message` — the SDK must not surface the code.
         client = HpsiMcpClient(
+            api_key=_KEY,
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     429,
                     json={"error": "rate_limit_exceeded", "message": "Daily limit reached. Register free."},
                 )
-            )
+            ),
         )
 
         with self.assertRaises(HpsiMcpRateLimitError) as context:
@@ -173,6 +189,7 @@ class HpsiMcpClientTests(unittest.TestCase):
 
     def test_anon_rate_limit_warns_once(self) -> None:
         client = HpsiMcpClient(
+            wallet=_FakeWallet(),
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     429,
@@ -181,7 +198,7 @@ class HpsiMcpClientTests(unittest.TestCase):
                         "upgrade": {"register_url": "https://hpsilab.com/register"},
                     },
                 )
-            )
+            ),
         )
 
         with warnings.catch_warnings(record=True) as caught:
@@ -197,6 +214,7 @@ class HpsiMcpClientTests(unittest.TestCase):
         # The URL here deliberately differs from the hardcoded fallback so the
         # assertion can't pass just because the two happen to match.
         client = HpsiMcpClient(
+            wallet=_FakeWallet(),
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     429,
@@ -205,7 +223,7 @@ class HpsiMcpClientTests(unittest.TestCase):
                         "upgrade": {"register_url": "https://hpsilab.com/register?src=eu"},
                     },
                 )
-            )
+            ),
         )
 
         with warnings.catch_warnings(record=True) as caught:
@@ -221,6 +239,7 @@ class HpsiMcpClientTests(unittest.TestCase):
         # No nested `upgrade` object at all — only the newer flat `register`
         # string (backend/app/middleware/rate_limit.py::_CONVERSION_LINKS).
         client = HpsiMcpClient(
+            wallet=_FakeWallet(),
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     429,
@@ -230,7 +249,7 @@ class HpsiMcpClientTests(unittest.TestCase):
                         "upgrade_hint": "Upgrade at https://hpsilab.com/pricing",
                     },
                 )
-            )
+            ),
         )
 
         with warnings.catch_warnings(record=True) as caught:
@@ -296,7 +315,8 @@ class HpsiMcpClientTests(unittest.TestCase):
             },
         }
         client = HpsiMcpClient(
-            transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body))
+            api_key=_KEY,
+            transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body)),
         )
 
         with self.assertRaises(HpsiMcpAuthError) as context:
@@ -315,7 +335,8 @@ class HpsiMcpClientTests(unittest.TestCase):
     def test_auth_error_has_no_conversion_fields_for_invalid_token(self) -> None:
         body = {"detail": "Invalid or expired token"}
         client = HpsiMcpClient(
-            transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body))
+            api_key=_KEY,
+            transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body)),
         )
 
         with self.assertRaises(HpsiMcpAuthError) as context:

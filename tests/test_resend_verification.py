@@ -12,6 +12,11 @@ from hpsilab_mcp import HpsiMcpAuthError, HpsiMcpClient, HpsiMcpRateLimitError
 ACCOUNT_KEY = "hpsi_" + "z" * 43
 
 
+class _FakeWallet:
+    def payment_headers(self, response):
+        return {"X-PAYMENT": "signed-payload"}
+
+
 def _client(handler, **kwargs):
     return HpsiMcpClient(
         base_url="http://testserver",
@@ -51,10 +56,15 @@ def test_resend_verification_cooldown_raises_rate_limit_error():
 
 
 def test_resend_verification_without_an_account_key_raises_auth_error():
-    # An anonymous caller has no account to verify - same failure any other
-    # authenticated endpoint would give it, no special-casing needed.
+    # A wallet-only client has no account to verify (a construction with
+    # neither api_key nor wallet can't even get this far — see
+    # HpsiMcpClient.__init__ — so a wallet is what stands in for "no account
+    # key" here). No Authorization header ever goes out, so the backend's
+    # response is the same plain 401 any other authenticated-only endpoint
+    # would give it — no special-casing needed on either side.
     client = HpsiMcpClient(
         base_url="http://testserver",
+        wallet=_FakeWallet(),
         transport=httpx.MockTransport(
             lambda request: httpx.Response(401, json={"detail": "Not authenticated"})
         ),

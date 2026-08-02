@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.11.0 - 2026-08-03
+
+### Breaking
+
+* **`HpsiMcpClient()` now requires `api_key=` or `wallet=`.** Anonymous free
+  access was retired backend-side — API key is mandatory on the MCP/SDK
+  channel, with x402 payment as the one remaining key-free path. Constructing
+  a client with neither now raises `HpsiMcpConfigError` immediately, before
+  any request is sent, instead of silently running in a now-nonexistent
+  anonymous mode.
+* **Removed**: the `anon_key=` constructor parameter, the `client.anon_key`
+  property, and all automatic anonymous-key adoption (`_adopt_anon_key`, the
+  429 adopt-and-retry behavior). The backend never issues an anonymous key to
+  this channel anymore, so there was nothing left for this to adopt.
+
+### Added
+
+* **`hpsilab_mcp.register(email, base_url=..., transport=...)`** — a
+  standalone module-level function for a caller with no client instance yet
+  (construction itself now requires an identity, so there had to be a
+  key-free way to bootstrap one). Wraps the same `POST /api/agent/register`
+  `client.register_account()` uses.
+
+### Migration
+
+```python
+# Before
+client = HpsiMcpClient()  # ran anonymously
+
+# After — get a free key first, no client instance needed
+result = hpsilab_mcp.register(email="you@example.com")
+client = HpsiMcpClient(api_key=result["api_key"])
+
+# Or pay per call instead, without ever registering
+client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY))
+```
+
 ## v0.10.1 - 2026-08-01
 
 ### Changed

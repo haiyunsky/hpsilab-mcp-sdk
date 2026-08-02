@@ -47,11 +47,17 @@ class _StubWallet:
 
 
 class PaymentFlowTests(unittest.TestCase):
-    def test_402_without_a_wallet_raises_with_the_challenge_attached(self) -> None:
+    def test_402_with_an_account_but_no_wallet_suggests_paying_or_upgrading(self) -> None:
+        """Reaching a 402 with `self._wallet is None` now always means a real
+        api_key is set (construction requires api_key or wallet — see
+        HpsiMcpClient.__init__) — an already-registered account whose quota
+        this call exceeds, not an unidentified caller. The message should
+        offer what's actually still available: pay per call, or upgrade."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(402, json=CHALLENGE)
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(api_key="hpsi_real", transport=httpx.MockTransport(handler))
 
         with self.assertRaises(HpsiMcpPaymentError) as caught:
             client.get_monte_carlo("NVDA")
@@ -61,29 +67,27 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(error.tool, "get_monte_carlo")
         self.assertEqual(error.price, "$0.10")
         self.assertEqual(error.accepts[0]["network"], "eip155:8453")
-        # The message should tell a human how to make it work, not just restate
-        # that they were refused.
         self.assertIn("$0.10", str(error))
         self.assertIn("X402Wallet", str(error))
-        # The wallet-free option must come first: it is the only one a running
-        # process can act on without a person or a code change.
-        self.assertIn("register_account", str(error))
-        self.assertLess(
-            str(error).index("register_account"), str(error).index("X402Wallet")
-        )
+        self.assertIn("hpsilab.com/pricing", str(error))
+        self.assertNotIn("register_account", str(error))
         client.close()
 
-    def test_402_warns_an_anonymous_caller_the_way_429_does(self) -> None:
+    def test_402_warns_a_wallet_only_caller_the_way_429_does(self) -> None:
         """The conversion hole found in the 2026-07-31 logs. `_raise_for_status`
         branches on 402 before 429, so crossing into overage used to *silence*
         the only human-visible prompt the SDK has — a caller's second session
         got a bare traceback recommending a crypto wallet and nothing else.
-        No server-side wording can fix that: on this path nothing reads it."""
+        No server-side wording can fix that: on this path nothing reads it.
+
+        Uses a wallet-only client (no api_key): construction now requires an
+        identity, and `self._api_key is None` — the warning's trigger
+        condition — means exactly that, not "no identity at all" anymore."""
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(402, json=CHALLENGE)
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=_StubWallet())
 
         with self.assertWarns(UserWarning) as warned:
             with self.assertRaises(HpsiMcpPaymentError):
@@ -103,7 +107,7 @@ class PaymentFlowTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(402, json=challenge)
 
-        client = HpsiMcpClient(transport=httpx.MockTransport(handler))
+        client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=_StubWallet())
 
         with self.assertWarns(UserWarning) as warned:
             with self.assertRaises(HpsiMcpPaymentError):
@@ -214,7 +218,7 @@ class WalletConstructionTests(unittest.TestCase):
         import os
 
         self.assertIsNone(os.environ.get("HPSILAB_X402_PRIVATE_KEY"))
-        client = HpsiMcpClient()
+        client = HpsiMcpClient(api_key="hpsi_test_key")
         self.assertIsNone(client._wallet)
         client.close()
 

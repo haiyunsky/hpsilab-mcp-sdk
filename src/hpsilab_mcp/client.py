@@ -13,6 +13,7 @@ from . import __version__
 from .errors import (
     HpsiMcpAPIError,
     HpsiMcpAuthError,
+    HpsiMcpConfigError,
     HpsiMcpConnectionError,
     HpsiMcpPaymentError,
     HpsiMcpRateLimitError,
@@ -24,16 +25,6 @@ from .tracking import build_tracking_headers
 
 
 DEFAULT_BASE_URL = "https://hpsilab.com"
-
-# Header that opts an un-keyed caller into the backend's anonymous read-only
-# path. Must match the backend's MCP_ANONYMOUS_READONLY_HEADER.
-ANONYMOUS_READONLY_HEADER = "x-mcp-anonymous-readonly"
-
-# The backend issues an anonymous caller a free key on its first *successful*
-# response and repeats it in the body of the 429 that ends its daily pool.
-# Presenting that key raises the pool substantially, so the client adopts it
-# automatically — see `HpsiMcpClient.anon_key`.
-ANON_KEY_HEADER = "x-hpsilab-anon-key"
 
 _TRACKING_SOURCE = "sdk"
 _TRACKING_CLIENT = "python-sdk"
@@ -51,11 +42,28 @@ class HpsiMcpClient:
         headers: Optional[Mapping[str, str]] = None,
         transport: Optional[httpx.BaseTransport] = None,
         wallet: Optional[X402Wallet] = None,
-        anon_key: Optional[str] = None,
     ) -> None:
+        # Pay-per-call is opt-in: an explicit wallet, or HPSILAB_X402_PRIVATE_KEY
+        # in the environment.
+        resolved_wallet = wallet if wallet is not None else wallet_from_env()
+
+        # Anonymous free access was retired (API key is mandatory) — x402
+        # payment is the one remaining key-free path, so identity has to be
+        # one or the other, checked before anything is constructed. A fresh
+        # caller with neither should use the standalone `register()`
+        # function (no client instance needed) to get a key first.
+        if not api_key and resolved_wallet is None:
+            raise HpsiMcpConfigError(
+                "HpsiMcpClient requires either api_key= or a configured wallet= "
+                "(or HPSILAB_X402_PRIVATE_KEY in the environment) — anonymous "
+                "free access was retired. Register a free key first with "
+                "hpsilab_mcp.register(email=\"you@example.com\"), or configure "
+                "a wallet to pay per call."
+            )
+
         # Tracking headers first (defaults), caller-supplied headers layered on
-        # top, then the business headers (Authorization / anonymous-readonly)
-        # set last so they can never be clobbered by either of the above.
+        # top, then the business header (Authorization) set last so it can
+        # never be clobbered by either of the above.
         request_headers = build_tracking_headers(
             source=_TRACKING_SOURCE,
             client=_TRACKING_CLIENT,
@@ -65,25 +73,9 @@ class HpsiMcpClient:
         request_headers.update(headers or {})
         if api_key:
             request_headers["Authorization"] = f"Bearer {api_key}"
-        else:
-            # No key → anonymous free-trial tier. Opt into the backend's
-            # read-only path so free/freemium tools work without an account.
-            request_headers.setdefault(ANONYMOUS_READONLY_HEADER, "1")
-            if anon_key:
-                # A key kept from an earlier process. Sent alongside the
-                # read-only header, not instead of it: this is still anonymous
-                # traffic, it is just identifiable anonymous traffic.
-                request_headers["Authorization"] = f"Bearer {anon_key}"
 
         self._api_key = api_key
-        # Tracked separately from `_api_key`, which stays the user's own
-        # credential: an anonymous key is something the server handed us, and
-        # the two must never be confused when deciding whether to adopt a new
-        # one or how to describe a rate-limit error.
-        self._anon_key = anon_key if api_key is None else None
-        # Pay-per-call is opt-in: an explicit wallet, or HPSILAB_X402_PRIVATE_KEY
-        # in the environment. Without one a 402 is raised, never auto-paid.
-        self._wallet = wallet if wallet is not None else wallet_from_env()
+        self._wallet = resolved_wallet
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -91,21 +83,6 @@ class HpsiMcpClient:
             timeout=timeout,
             transport=transport,
         )
-
-    @property
-    def anon_key(self) -> Optional[str]:
-        """The free anonymous key this client is using, if any.
-
-        Populated automatically the first time the server issues one. Persist
-        it and pass it back as `anon_key=` in a later process to keep the
-        larger daily allowance instead of starting over as an unidentified
-        caller — the key is not tied to your IP address, which matters because
-        cloud egress addresses drift.
-
-        None for a client constructed with a real `api_key`: an account's
-        credential is never displaced by an anonymous one.
-        """
-        return self._anon_key
 
     def close(self) -> None:
         self._client.close()
@@ -193,9 +170,13 @@ class HpsiMcpClient:
         For agents: no password, no wallet, no web form. The account is also
         bound to this caller server-side, so calls made afterwards are metered
         as the account even from a process that cannot change its own
-        Authorization header.
+        Authorization header. Works on any constructed client, including a
+        wallet-only one (`HpsiMcpClient(wallet=...)`) that wants an account
+        too — a fresh caller with no client yet should use the standalone
+        `hpsilab_mcp.register()` function instead, since construction itself
+        now requires an api_key or a wallet.
 
-        The account starts unverified, which keeps the anonymous daily
+        The account starts unverified, which keeps the anonymous-rate daily
         allowance until the emailed link is confirmed; confirming it unlocks
         the full Free plan.
 
@@ -204,8 +185,10 @@ class HpsiMcpClient:
         the address already belongs to a different account.
 
         `adopt_key=False` returns the response without switching this client
-        over to the new key — use it when you intend to keep calling
-        anonymously, or to hand the key to a different process.
+        over to the new key — use it to keep this client on its current
+        identity (e.g. a wallet-only client that wants to keep paying per
+        call rather than switch to the account it just registered), or to
+        hand the key to a different process.
         """
         response = self._send(
             "POST",
@@ -220,32 +203,27 @@ class HpsiMcpClient:
         if adopt_key and isinstance(payload, dict):
             key = (payload.get("api_key") or "").strip()
             if key:
-                # A real account key, so the anonymous one is now obsolete —
-                # clearing it keeps `anon_key` an honest answer to "what
-                # anonymous identity is in play", which is None from here on.
                 self._api_key = key
-                self._anon_key = None
                 self._client.headers["Authorization"] = f"Bearer {key}"
         return payload
 
     def resend_verification_email(self) -> Any:
         """Ask the backend to re-send this account's verification email.
 
-        Works with a real account key (passed as `api_key=` or adopted via
-        `register_account()`) — but also works with **no key at all**, for a
-        header-less caller whose fingerprint the backend already bound to an
-        account via an earlier `register_account()` call (possibly in a
-        different process — an MCP agent has no way to carry that call's key
-        forward, since an LLM cannot rewrite its own connection's
-        Authorization header). The backend tries the real token first and
-        falls back to the same fingerprint lookup `register_account()`
-        itself uses; only a caller with neither a matching token nor a bound
-        fingerprint gets `HpsiMcpAuthError`.
+        Requires a real account key (passed as `api_key=` or adopted via
+        `register_account()`). The backend no longer falls back to a
+        fingerprint match for a header-less caller — API key is mandatory
+        (mandatory-API-key plan retired that fallback along with the rest of
+        anonymous MCP/SDK access, since fingerprint-binding was itself a
+        no-key-needed identity). A caller that lost its key has to register
+        again (`register_account()`/`hpsilab_mcp.register()`) rather than
+        being silently recognized by IP/client fingerprint.
 
-        This is what a bound-but-unverified caller's 429
-        (`HpsiMcpRateLimitError`) is pointing at: the daily pool stays at the
-        anonymous rate until the account is verified, and there is no signup
-        step left to offer — verifying is the only lever.
+        This is what a caller's 429 (`HpsiMcpRateLimitError`) on Free-tier
+        quota with an unverified email is pointing at: the account's
+        allowance stays at the anonymous rate until the email is confirmed,
+        and there is no signup step left to offer — verifying is the only
+        lever.
 
         Raises `HpsiMcpRateLimitError` (429) if you already requested one
         recently — the backend enforces a short cooldown between resends.
@@ -296,16 +274,6 @@ class HpsiMcpClient:
         tool_name: Optional[str] = None,
     ) -> Any:
         response = self._send(method, path, params, tool_name)
-        adopted = self._adopt_anon_key(response)
-
-        # A 429 that came with a key we did not have is the anonymous pool
-        # running out *and* the fix arriving in the same response. Adopting it
-        # and repeating the call once turns that dead end into a served
-        # request; the retry is bounded by `adopted`, which can only be true
-        # the first time, so an exhausted keyed caller still fails normally.
-        if response.status_code == 429 and adopted:
-            response = self._send(method, path, params, tool_name)
-            self._adopt_anon_key(response)
 
         # 402 means "this call is available, it just costs money now". With a
         # wallet configured, sign the challenge and repeat the request once;
@@ -318,42 +286,6 @@ class HpsiMcpClient:
 
         self._raise_for_status(response)
         return self._decode_json(response)
-
-    def _adopt_anon_key(self, response: httpx.Response) -> bool:
-        """Pick up a server-issued anonymous key and use it from now on.
-
-        Returns True only when a *new* key was adopted, so callers can use that
-        to authorise exactly one retry.
-
-        Skipped entirely for a client built with a real `api_key`: that
-        caller's plan is already better than any anonymous allowance, and
-        silently swapping its credential would be astonishing behaviour.
-
-        The key arrives on a header for a served call and additionally in the
-        JSON body of the 429 that ends the free pool, because an agent that
-        only ever reads the body would otherwise never see it.
-        """
-        if self._api_key is not None:
-            return False
-
-        key = response.headers.get(ANON_KEY_HEADER)
-        if not key and response.status_code == 429:
-            try:
-                body = response.json()
-            except ValueError:
-                body = None
-            if isinstance(body, dict):
-                candidate = body.get("anon_key")
-                if isinstance(candidate, str):
-                    key = candidate
-
-        key = (key or "").strip()
-        if not key or key == self._anon_key:
-            return False
-
-        self._anon_key = key
-        self._client.headers["Authorization"] = f"Bearer {key}"
-        return True
 
     def _send(
         self,
@@ -448,19 +380,23 @@ class HpsiMcpClient:
             pass
 
         if self._wallet is None:
-            # Ordered by what the caller can actually do from here. A wallet
-            # cannot be acquired mid-traceback — configuring one means editing
-            # code and holding USDC — whereas `register_account` is a method on
-            # the object that just raised, needs no wallet and no browser, and
-            # is the only option that resolves this within the running process.
-            message = (
-                f"{message} To continue without a wallet, register free from "
-                'this process: client.register_account(email="you@example.com").'
-            )
+            # Reaching a 402 with no wallet configured means this client has a
+            # real api_key (construction requires one or the other — see
+            # HpsiMcpClient.__init__): an already-registered account whose
+            # quota this Pro tool / overage call exceeds, not an unidentified
+            # caller. There is nothing to "register" — the one lever left is
+            # paying per call.
             if price:
                 message = (
-                    f"{message} Or pay {price} per call by configuring "
-                    "HpsiMcpClient(wallet=X402Wallet(...))."
+                    f"{message} Pay {price} per call by configuring "
+                    "HpsiMcpClient(wallet=X402Wallet(...)), or upgrade your plan "
+                    "at https://hpsilab.com/pricing."
+                )
+            else:
+                message = (
+                    f"{message} Configure HpsiMcpClient(wallet=X402Wallet(...)) "
+                    "to pay per call, or upgrade your plan at "
+                    "https://hpsilab.com/pricing."
                 )
         return HpsiMcpPaymentError(
             message,
@@ -593,8 +529,7 @@ class HpsiMcpClient:
         warnings module so Python's default filter dedups identical warnings
         per process — no manual "already shown" state.
 
-        Same unified copy regardless of whether this caller already holds an
-        anonymous key (`self._anon_key`) — see
+        Same unified copy as `_warn_anon_payment_required` — see
         backend/app/middleware/rate_limit.py::_SIMPLE_QUOTA_MESSAGE. Only the
         register URL is still read from the response body, since that value
         can move server-side without a new SDK release.
@@ -633,3 +568,61 @@ class HpsiMcpClient:
             else:
                 params[key] = str(value)
         return params
+
+
+def register(
+    email: str,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: float = 30.0,
+    transport: Optional[httpx.BaseTransport] = None,
+) -> dict:
+    """Register a free account and get back an API key — no client instance
+    needed.
+
+    `HpsiMcpClient()` now requires an identity (api_key or wallet) to even
+    construct, per the mandatory-API-key change — this is the one entry
+    point that works before you have either. Wraps the same
+    `POST /api/agent/register` `HpsiMcpClient.register_account` uses. For
+    agents: no password, no wallet, no web form; the account is bound to this
+    caller server-side (see `HpsiMcpClient.register_account`'s docstring for
+    the idempotency/binding details).
+
+    `transport=` mirrors `HpsiMcpClient`'s constructor param — pass an
+    `httpx.MockTransport` in tests instead of hitting a real network.
+
+    Typical use::
+
+        result = hpsilab_mcp.register(email="you@example.com")
+        client = HpsiMcpClient(api_key=result["api_key"])
+    """
+    headers = build_tracking_headers(
+        source=_TRACKING_SOURCE,
+        client=_TRACKING_CLIENT,
+        version=__version__,
+        tool="register_account",
+    )
+    headers["User-Agent"] = _USER_AGENT
+    try:
+        with httpx.Client(base_url=base_url.rstrip("/"), transport=transport, timeout=timeout) as http:
+            response = http.post("/api/agent/register", json={"email": email}, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise HpsiMcpTimeoutError("Request timed out.") from exc
+    except httpx.RequestError as exc:
+        raise HpsiMcpConnectionError("Request failed before a response was received.") from exc
+
+    if response.status_code >= 400:
+        try:
+            detail = response.json()
+            message = detail.get("detail") or detail.get("message") or response.text
+        except ValueError:
+            message = response.text
+        raise HpsiMcpAPIError(
+            f"Registration failed ({response.status_code}): {message}",
+            status_code=response.status_code,
+            response_text=response.text,
+        )
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise HpsiMcpResponseError("Registration response was not valid JSON.") from exc
