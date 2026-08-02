@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.1 - 2026-08-03
+
+### Changed
+
+* **README: added a "Getting an API Key" section** laying out both ways to get
+  one as an explicit numbered flow — generating one from the website
+  (`hpsilab.com` → Settings → API Keys) for a human who already has or wants
+  an account, and `hpsilab_mcp.register(email=...)` for an agent/script with
+  no sign-up step. v0.11.0 added the `register()` function itself and
+  mentioned it in passing; this makes both paths to a key the first thing a
+  new reader sees, right after Installation. No code change.
+
 ## v0.11.0 - 2026-08-03
 
 ### Breaking
