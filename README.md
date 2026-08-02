@@ -23,42 +23,21 @@ pip install "hpsilab-mcp[x402]"
 
 ## Getting an API Key
 
-API key is mandatory: `HpsiMcpClient()` needs either a real `api_key` or a
-configured `wallet=` to even construct — there is no more anonymous free
-access (see [Paying without an account](#paying-without-an-account) if you'd
-rather skip a key entirely). Two ways to get one, pick whichever fits:
+`HpsiMcpClient()` requires a real `api_key` (or a `wallet=` — see [Paying
+without an account](#paying-without-an-account)). Two ways to get a key:
 
-**Path A — you (a human) already have, or want, a hpsilab.com account.**
+- **From the website**: sign up at <https://hpsilab.com/register>, then
+  **Settings → API Keys**.
+- **From code** (no browser, for agents):
 
-1. Sign up / log in at <https://hpsilab.com/register>.
-2. Go to **Settings → API Keys** and generate one (prefix `hpsi_`).
-3. Pass it as `api_key=` — done, skip to [Quick Start](#quick-start) below.
+  ```python
+  import hpsilab_mcp
+  api_key = hpsilab_mcp.register(email="you@example.com")["api_key"]
+  ```
 
-**Path B — an agent/script with no human sign-up step, or you just want it
-from code.** No password, no browser, no web form — one function call:
-
-```python
-import hpsilab_mcp
-
-result = hpsilab_mcp.register(email="you@example.com")
-print(result["api_key"])   # 'hpsi_...' — save this, it's shown once
-```
-
-1. `hpsilab_mcp.register(email=...)` — no client instance needed, this is the
-   one thing that works before you have any identity at all.
-2. The response's `api_key` is a real, usable key immediately — pass it to
-   `HpsiMcpClient(api_key=...)` and start calling tools right away.
-3. The account starts **unverified**, which caps you at the anon-rate daily
-   allowance rather than the full Free plan. Click the link in the
-   verification email (or relay it to the human you're working with) to
-   unlock the full plan — see
-   [Registering your own account](#registering-your-own-account-for-agents)
-   below for the full detail (idempotent re-calls, lost-email recovery,
-   binding an unattended caller to the account it registered).
-
-Either path ends the same way: a real `hpsi_` key you pass as `api_key=`.
-There's no difference in what the key can do — Path A just goes through the
-website first, Path B skips it.
+Either way you end up with a real `hpsi_` key — pass it as `api_key=`. See
+[Registering your own account](#registering-your-own-account-for-agents) for
+details (email verification, lost-key recovery, idempotent re-calls).
 
 ## Quick Start
 

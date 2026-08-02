@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.11.2 - 2026-08-03
+
+### Changed
+
+* **Simplified the "Getting an API Key" section** — v0.11.1 added it as two
+  fully-numbered 3-4 step paths with a closing summary paragraph; cut down to
+  a two-bullet list (website vs. code) since that's all either path actually
+  needs, with a pointer to "Registering your own account" for anyone who
+  wants the detail (verification, lost-key recovery, idempotency). No code
+  change.
+
 ## v0.11.1 - 2026-08-03
 
 ### Changed
