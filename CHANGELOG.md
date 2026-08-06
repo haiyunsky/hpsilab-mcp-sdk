@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.12.1 - 2026-08-06
+
+### Breaking
+
+* HTTP `401` and unresolved HTTP `402` now raise `HpsiMcpConfigError` and
+  open the current Client's authentication circuit. Code catching
+  `HpsiMcpAuthError` or `HpsiMcpPaymentError` for those statuses must migrate
+  to `HpsiMcpConfigError`. HTTP `403` still raises `HpsiMcpAuthError`.
+
+### Changed
+
+* Added a per-client authentication circuit breaker. The first unresolved
+  HTTP 401 or 402 raises `HpsiMcpConfigError`; subsequent calls on that client
+  fail locally until `set_api_key()` or `set_wallet()` is called. A 402 is
+  retried only once and only when a configured wallet can sign the challenge.
+* Shortened every `HpsiMcpConfigError` to a developer-focused three-part
+  format: summary, reason, and recovery steps.
+* Reduced published artifacts. Wheel and sdist exclude `tests/`, `docs/`,
+  `examples/`, `python/`, and `typescript/`; the repository keeps them for
+  development and reference.
+
+### Migration
+
+```python
+from hpsilab_mcp import HpsiMcpConfigError
+
+try:
+    result = client.get_monte_carlo("NVDA")
+except HpsiMcpConfigError:
+    # Retrying before reconfiguration is blocked locally.
+    client.set_api_key("NEW_API_KEY")
+```
+
+`client.set_wallet(X402Wallet(PRIVATE_KEY))` or a new Client are the other
+recovery paths. Removing the Client's only authentication method is rejected.
+
 ## v0.11.2 - 2026-08-03
 
 ### Changed

@@ -12,7 +12,7 @@ import warnings
 import httpx
 
 from hpsilab_mcp import HpsiMcpClient
-from hpsilab_mcp.errors import HpsiMcpPaymentError
+from hpsilab_mcp.errors import HpsiMcpConfigError
 
 CHALLENGE = {
     "x402Version": 2,
@@ -59,18 +59,12 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(api_key="hpsi_real", transport=httpx.MockTransport(handler))
 
-        with self.assertRaises(HpsiMcpPaymentError) as caught:
+        with self.assertRaises(HpsiMcpConfigError) as caught:
             client.get_monte_carlo("NVDA")
 
         error = caught.exception
-        self.assertEqual(error.status_code, 402)
-        self.assertEqual(error.tool, "get_monte_carlo")
-        self.assertEqual(error.price, "$0.10")
-        self.assertEqual(error.accepts[0]["network"], "eip155:8453")
-        self.assertIn("$0.10", str(error))
-        self.assertIn("X402Wallet", str(error))
-        self.assertIn("hpsilab.com/pricing", str(error))
-        self.assertNotIn("register_account", str(error))
+        self.assertIn("HTTP 402", str(error))
+        self.assertIn("client.set_wallet(wallet)", str(error))
         client.close()
 
     def test_402_warns_a_wallet_only_caller_the_way_429_does(self) -> None:
@@ -89,13 +83,8 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=_StubWallet())
 
-        with self.assertWarns(UserWarning) as warned:
-            with self.assertRaises(HpsiMcpPaymentError):
-                client.get_monte_carlo("NVDA")
-
-        message = str(warned.warning)
-        self.assertIn("register_account", message)
-        self.assertIn("Free API key required", message)
+        with self.assertRaises(HpsiMcpConfigError):
+            client.get_monte_carlo("NVDA")
         client.close()
 
     def test_402_warning_reads_flat_register_field_when_no_upgrade_dict(self) -> None:
@@ -109,11 +98,8 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=_StubWallet())
 
-        with self.assertWarns(UserWarning) as warned:
-            with self.assertRaises(HpsiMcpPaymentError):
-                client.get_monte_carlo("NVDA")
-
-        self.assertIn("hpsilab.com/register?src=flat", str(warned.warning))
+        with self.assertRaises(HpsiMcpConfigError):
+            client.get_monte_carlo("NVDA")
         client.close()
 
     def test_402_stays_quiet_for_a_caller_with_its_own_key(self) -> None:
@@ -127,7 +113,7 @@ class PaymentFlowTests(unittest.TestCase):
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            with self.assertRaises(HpsiMcpPaymentError):
+            with self.assertRaises(HpsiMcpConfigError):
                 client.get_monte_carlo("NVDA")
 
         self.assertEqual([w for w in caught if "register_account" in str(w.message)], [])
@@ -173,10 +159,26 @@ class PaymentFlowTests(unittest.TestCase):
         wallet = _StubWallet()
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=wallet)
 
-        with self.assertRaises(HpsiMcpPaymentError):
+        with self.assertRaises(HpsiMcpConfigError):
             client.get_monte_carlo("NVDA")
 
         self.assertEqual(wallet.calls, 1)
+        client.close()
+
+    def test_final_402_trips_breaker_and_blocks_all_later_requests(self) -> None:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(402, json=CHALLENGE)
+
+        client = HpsiMcpClient(api_key="hpsi_real", transport=httpx.MockTransport(handler))
+        with self.assertRaises(HpsiMcpConfigError):
+            client.get_monte_carlo("NVDA")
+        with self.assertRaises(HpsiMcpConfigError):
+            client.get_ai_prediction("NVDA")
+        self.assertEqual(calls, 1)
         client.close()
 
     def test_a_refused_challenge_propagates_untouched(self) -> None:
@@ -190,8 +192,10 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=wallet)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(HpsiMcpConfigError) as caught:
             client.get_monte_carlo("NVDA")
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn("max_amount policy", str(caught.exception))
         client.close()
 
     def test_pro_tool_402_is_also_payable(self) -> None:

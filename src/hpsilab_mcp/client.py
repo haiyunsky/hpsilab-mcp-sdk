@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from threading import RLock
 from types import TracebackType
 from typing import Any, Mapping, Optional, Sequence, Type
 from urllib.parse import quote
@@ -30,6 +31,27 @@ _TRACKING_SOURCE = "sdk"
 _TRACKING_CLIENT = "python-sdk"
 _USER_AGENT = f"hpsilab-python-sdk/{__version__}"
 
+_MISSING_AUTH_MESSAGE = """API key or wallet required.
+
+Anonymous access has ended.
+
+Free API key:
+    hpsilab_mcp.register(email="you@example.com")
+
+Or configure:
+    api_key=
+    wallet=
+    HPSILAB_X402_PRIVATE_KEY"""
+
+_REMOVE_AUTH_MESSAGE = """API key or wallet required.
+
+The Client must keep at least one authentication method.
+
+Configure:
+    api_key=
+    wallet=
+    HPSILAB_X402_PRIVATE_KEY"""
+
 
 class HpsiMcpClient:
     """Minimal REST API wrapper for the hosted H|ψ⟩ Quantum Finance APIs."""
@@ -53,13 +75,7 @@ class HpsiMcpClient:
         # caller with neither should use the standalone `register()`
         # function (no client instance needed) to get a key first.
         if not api_key and resolved_wallet is None:
-            raise HpsiMcpConfigError(
-                "HpsiMcpClient requires either api_key= or a configured wallet= "
-                "(or HPSILAB_X402_PRIVATE_KEY in the environment) — anonymous "
-                "free access was retired. Register a free key first with "
-                "hpsilab_mcp.register(email=\"you@example.com\"), or configure "
-                "a wallet to pay per call."
-            )
+            raise HpsiMcpConfigError(_MISSING_AUTH_MESSAGE)
 
         # Tracking headers first (defaults), caller-supplied headers layered on
         # top, then the business header (Authorization) set last so it can
@@ -76,6 +92,12 @@ class HpsiMcpClient:
 
         self._api_key = api_key
         self._wallet = resolved_wallet
+        self._auth_failed = False
+        self._auth_failure_message: Optional[str] = None
+        # Keep the check/request/response transition atomic. Without this,
+        # concurrent calls could all leave the process before the first 401 or
+        # 402 trips the breaker.
+        self._request_lock = RLock()
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -86,6 +108,26 @@ class HpsiMcpClient:
 
     def close(self) -> None:
         self._client.close()
+
+    def set_api_key(self, api_key: Optional[str]) -> None:
+        """Replace the API key and reset this client's authentication breaker."""
+        with self._request_lock:
+            if not api_key and self._wallet is None:
+                raise HpsiMcpConfigError(_REMOVE_AUTH_MESSAGE)
+            self._api_key = api_key
+            if api_key:
+                self._client.headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                self._client.headers.pop("Authorization", None)
+            self._reset_auth_circuit()
+
+    def set_wallet(self, wallet: Optional[X402Wallet]) -> None:
+        """Replace the x402 wallet and reset this client's authentication breaker."""
+        with self._request_lock:
+            if wallet is None and not self._api_key:
+                raise HpsiMcpConfigError(_REMOVE_AUTH_MESSAGE)
+            self._wallet = wallet
+            self._reset_auth_circuit()
 
     def __enter__(self) -> "HpsiMcpClient":
         return self
@@ -190,21 +232,21 @@ class HpsiMcpClient:
         call rather than switch to the account it just registered), or to
         hand the key to a different process.
         """
-        response = self._send(
-            "POST",
-            "/api/agent/register",
-            params=None,
-            tool_name="register_account",
-            json={"email": email},
-        )
-        self._raise_for_status(response)
-        payload = self._decode_json(response)
-
-        if adopt_key and isinstance(payload, dict):
-            key = (payload.get("api_key") or "").strip()
-            if key:
-                self._api_key = key
-                self._client.headers["Authorization"] = f"Bearer {key}"
+        with self._request_lock:
+            self._ensure_auth_circuit_closed()
+            response = self._send(
+                "POST",
+                "/api/agent/register",
+                params=None,
+                tool_name="register_account",
+                json={"email": email},
+            )
+            self._raise_for_status(response)
+            payload = self._decode_json(response)
+            if adopt_key and isinstance(payload, dict):
+                key = (payload.get("api_key") or "").strip()
+                if key:
+                    self.set_api_key(key)
         return payload
 
     def resend_verification_email(self) -> Any:
@@ -228,14 +270,16 @@ class HpsiMcpClient:
         Raises `HpsiMcpRateLimitError` (429) if you already requested one
         recently — the backend enforces a short cooldown between resends.
         """
-        response = self._send(
-            "POST",
-            "/api/auth/resend-verification",
-            params=None,
-            tool_name="resend_verification_email",
-        )
-        self._raise_for_status(response)
-        return self._decode_json(response)
+        with self._request_lock:
+            self._ensure_auth_circuit_closed()
+            response = self._send(
+                "POST",
+                "/api/auth/resend-verification",
+                params=None,
+                tool_name="resend_verification_email",
+            )
+            self._raise_for_status(response)
+            return self._decode_json(response)
 
     def _tool_headers(self, tool_name: Optional[str]) -> Optional[dict]:
         """Per-request override merged on top of the client's default headers
@@ -273,19 +317,50 @@ class HpsiMcpClient:
         params: Optional[Mapping[str, str]] = None,
         tool_name: Optional[str] = None,
     ) -> Any:
-        response = self._send(method, path, params, tool_name)
+        with self._request_lock:
+            self._ensure_auth_circuit_closed()
+            response = self._send(method, path, params, tool_name)
 
-        # 402 means "this call is available, it just costs money now". With a
-        # wallet configured, sign the challenge and repeat the request once;
-        # without one, fall through to _raise_for_status and hand the caller
-        # the challenge to pay however they like.
-        if response.status_code == 402 and self._wallet is not None:
-            payment_headers = self._wallet.payment_headers(response)
-            if payment_headers:
-                response = self._send(method, path, params, tool_name, extra=payment_headers)
+            # A 402 is retryable exactly once, and only after a configured
+            # wallet successfully produces payment headers.
+            if response.status_code == 402 and self._wallet is not None:
+                try:
+                    payment_headers = self._wallet.payment_headers(response)
+                except Exception:
+                    # Do not chain third-party wallet exceptions: a wallet
+                    # implementation may include signed payment context in
+                    # its exception text or attributes, which must not leak
+                    # into user tracebacks or logs.
+                    self._trip_auth_circuit(response)
+                if payment_headers:
+                    response = self._send(method, path, params, tool_name, extra=payment_headers)
 
-        self._raise_for_status(response)
-        return self._decode_json(response)
+            self._raise_for_status(response)
+            return self._decode_json(response)
+
+    def _reset_auth_circuit(self) -> None:
+        self._auth_failed = False
+        self._auth_failure_message = None
+
+    def _ensure_auth_circuit_closed(self) -> None:
+        if self._auth_failed:
+            raise HpsiMcpConfigError(self._auth_failure_message or _MISSING_AUTH_MESSAGE)
+
+    def _trip_auth_circuit(
+        self,
+        response: httpx.Response,
+    ) -> None:
+        message = f"""Authentication failed (HTTP {response.status_code}).
+
+{self._error_message(response)}
+
+Fix:
+    client.set_api_key("NEW_API_KEY")
+    client.set_wallet(wallet)
+    or create a new HpsiMcpClient"""
+        self._auth_failed = True
+        self._auth_failure_message = message
+        raise HpsiMcpConfigError(message) from None
 
     def _send(
         self,
@@ -313,7 +388,9 @@ class HpsiMcpClient:
             return
 
         message = self._error_message(response)
-        if response.status_code in {401, 403}:
+        if response.status_code in {401, 402}:
+            self._trip_auth_circuit(response)
+        if response.status_code == 403:
             body = self._response_body(response)
             conv = self._conversion_fields(body)
             raise HpsiMcpAuthError(
@@ -369,6 +446,7 @@ class HpsiMcpClient:
         crash on top of the original failure.
         """
         accepts = tool = price = None
+        body = None
         try:
             body = response.json()
             if isinstance(body, dict):
@@ -402,6 +480,7 @@ class HpsiMcpClient:
             message,
             status_code=response.status_code,
             response_text=response.text,
+            body=body if isinstance(body, dict) else None,
             accepts=accepts,
             tool=tool,
             price=price,

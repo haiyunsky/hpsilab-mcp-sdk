@@ -85,7 +85,7 @@ result = client.get_ai_prediction("TSLA")
 print(result)
 ```
 
-### Reading a 429/401 without re-parsing JSON
+### Authentication failures and rate limits
 
 A `429` (rate limit / quota exceeded) raises `HpsiMcpRateLimitError` with the
 backend's fields promoted onto it — no need to parse `response_text` yourself:
@@ -101,10 +101,11 @@ except HpsiMcpRateLimitError as exc:
     print(exc.body)                            # the full raw response, if needed
 ```
 
-`HpsiMcpAuthError` (401/403) carries the same `register_url`/`pricing_url`/
-`upgrade_message` — but only when the 401 means "no credentials sent at all".
-An expired token, or a 403, leaves all three `None`: you already have an
-account, so the SDK does not suggest registering one.
+An unresolved `401` raises `HpsiMcpConfigError` and opens an authentication
+circuit breaker on that Client. Later calls fail locally without another HTTP
+request. Recover with `client.set_api_key(...)`, `client.set_wallet(...)`, or
+a new Client. A `403` remains `HpsiMcpAuthError`; a `429` remains
+`HpsiMcpRateLimitError` and neither opens this circuit.
 
 ## Registering your own account (for agents)
 
@@ -116,8 +117,6 @@ import hpsilab_mcp
 from hpsilab_mcp import HpsiMcpClient
 
 result = hpsilab_mcp.register(email="you@example.com")
-print(result["api_key"])
-
 client = HpsiMcpClient(api_key=result["api_key"])
 client.get_monte_carlo("NVDA")     # now metered as your account
 ```
@@ -154,7 +153,8 @@ client.resend_verification_email()
 
 Requires a real account key (`api_key=`, or whatever `register_account()`
 just adopted) — a wallet-only client, or one with an invalid/expired key, gets
-`HpsiMcpAuthError` instead: there's no more fingerprint-based fallback for a
+`HpsiMcpConfigError` and opens the local authentication circuit: there's no
+more fingerprint-based fallback for a
 header-less caller (API key is mandatory now, and fingerprint binding was
 itself a no-key-needed identity — closed along with the rest of anonymous
 access). The backend also enforces a short cooldown between resends; calling
@@ -174,17 +174,17 @@ running process. Every 402 challenge also names a card checkout URL
 (`https://hpsilab.com/pricing?anon=...`) for a human to pay with a card
 instead, if neither a wallet nor unattended registration fits.
 
-Without a wallet the SDK raises `HpsiMcpPaymentError` with the challenge
-attached, and you can pay it however you like:
+Without a wallet the SDK does not retry a `402`. It raises
+`HpsiMcpConfigError` and opens the Client's authentication circuit:
 
 ```python
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpPaymentError
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError
 
 try:
     client.get_monte_carlo("NVDA")
-except HpsiMcpPaymentError as exc:
-    print(exc.tool, exc.price)   # get_monte_carlo $0.10
-    print(exc.accepts)           # scheme / network / asset / amount / payTo
+except HpsiMcpConfigError as exc:
+    print(exc)
+    # Configure a wallet, replace the API key, or create a new Client.
 ```
 
 With a wallet, the client signs the challenge and repeats the request for you:
@@ -205,11 +205,21 @@ is configured:
 * Nothing is paid pre-emptively — the call is always attempted first, and
   only pays if the response comes back 402.
 * Each call is retried **once** after paying; a server that keeps answering
-  402 cannot drain the wallet.
+  402 cannot drain the wallet and opens the authentication circuit.
 * `max_price_usdc` (default `$1.00`) caps a single call. A challenge asking for
   more is refused, not signed.
 
 Signing happens locally; the private key never leaves your process.
+
+To recover an existing Client after a `401` or unresolved `402`:
+
+```python
+client.set_api_key("NEW_API_KEY")
+# or
+client.set_wallet(X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
+```
+
+See [Upgrading](docs/upgrading.md) for the exception-contract migration.
 
 | Tool | Price per call |
 | --- | ---: |

@@ -50,8 +50,20 @@ def _quota_exceeded():
 
 
 def test_construction_with_neither_api_key_nor_wallet_raises():
-    with pytest.raises(HpsiMcpConfigError):
+    with pytest.raises(HpsiMcpConfigError) as caught:
         HpsiMcpClient(base_url="http://testserver")
+
+    assert str(caught.value) == """API key or wallet required.
+
+Anonymous access has ended.
+
+Free API key:
+    hpsilab_mcp.register(email="you@example.com")
+
+Or configure:
+    api_key=
+    wallet=
+    HPSILAB_X402_PRIVATE_KEY"""
 
 
 def test_construction_with_only_an_api_key_succeeds():

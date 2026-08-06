@@ -4,7 +4,7 @@ import warnings
 import httpx
 
 from hpsilab_mcp import HpsiMcpClient
-from hpsilab_mcp.errors import HpsiMcpAuthError, HpsiMcpRateLimitError
+from hpsilab_mcp.errors import HpsiMcpConfigError, HpsiMcpRateLimitError
 
 # Anonymous construction was retired — HpsiMcpClient() now requires an
 # api_key or a wallet. Most tests here don't care which identity is used,
@@ -146,11 +146,32 @@ class HpsiMcpClientTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaises(HpsiMcpAuthError) as context:
+        with self.assertRaises(HpsiMcpConfigError) as context:
             client.get_option_pressure("SPY")
 
-        self.assertEqual(context.exception.status_code, 401)
-        self.assertEqual(str(context.exception), "Unauthorized")
+        self.assertIn("HTTP 401", str(context.exception))
+        self.assertIn("Unauthorized", str(context.exception))
+        client.close()
+
+    def test_auth_circuit_blocks_later_calls_until_api_key_is_reconfigured(self) -> None:
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.headers.get("Authorization"))
+            if len(calls) == 1:
+                return httpx.Response(401, json={"detail": "Invalid API key"})
+            return httpx.Response(200, json={"ok": True})
+
+        client = HpsiMcpClient(api_key="hpsi_bad", transport=httpx.MockTransport(handler))
+        with self.assertRaises(HpsiMcpConfigError):
+            client.get_option_pressure("SPY")
+        with self.assertRaises(HpsiMcpConfigError):
+            client.get_ai_prediction("SPY")
+        self.assertEqual(len(calls), 1)
+
+        client.set_api_key("hpsi_fixed")
+        self.assertEqual(client.get_ai_prediction("SPY"), {"ok": True})
+        self.assertEqual(calls, ["Bearer hpsi_bad", "Bearer hpsi_fixed"])
         client.close()
 
     def test_rate_limit_error(self) -> None:
@@ -319,17 +340,10 @@ class HpsiMcpClientTests(unittest.TestCase):
             transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body)),
         )
 
-        with self.assertRaises(HpsiMcpAuthError) as context:
+        with self.assertRaises(HpsiMcpConfigError) as context:
             client.get_equity_curve("NVDA")
 
-        error = context.exception
-        self.assertEqual(error.register_url, "https://hpsilab.com/register")
-        self.assertEqual(error.pricing_url, "https://hpsilab.com/pricing")
-        self.assertEqual(
-            error.upgrade_message,
-            "This feature requires an account. Register for free access, or upgrade to Pro for advanced analytics.",
-        )
-        self.assertEqual(error.body, body)
+        self.assertIn("Not authenticated", str(context.exception))
         client.close()
 
     def test_auth_error_has_no_conversion_fields_for_invalid_token(self) -> None:
@@ -339,15 +353,10 @@ class HpsiMcpClientTests(unittest.TestCase):
             transport=httpx.MockTransport(lambda request: httpx.Response(401, json=body)),
         )
 
-        with self.assertRaises(HpsiMcpAuthError) as context:
+        with self.assertRaises(HpsiMcpConfigError) as context:
             client.get_equity_curve("NVDA")
 
-        error = context.exception
-        self.assertIsNone(error.register_url)
-        self.assertIsNone(error.pricing_url)
-        self.assertIsNone(error.upgrade_message)
-        # `body` still carries the (trivial) raw response - lossless either way.
-        self.assertEqual(error.body, body)
+        self.assertIn("Invalid or expired token", str(context.exception))
         client.close()
 
     def test_authenticated_client_does_not_warn_on_rate_limit(self) -> None:

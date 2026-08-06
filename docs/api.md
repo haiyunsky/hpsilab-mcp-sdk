@@ -180,6 +180,7 @@ tool calls.
 The SDK exposes typed exceptions:
 
 * `HpsiMcpError`
+* `HpsiMcpConfigError`
 * `HpsiMcpConnectionError`
 * `HpsiMcpTimeoutError`
 * `HpsiMcpAPIError`
@@ -189,6 +190,15 @@ The SDK exposes typed exceptions:
 * `HpsiMcpResponseError`
 
 API errors include `status_code` and `response_text` when available.
+
+`HpsiMcpConfigError` is also raised by the authentication circuit breaker.
+After the first unresolved HTTP `401` or `402`, later calls on that Client
+fail locally without sending a request. Recover with `set_api_key()`,
+`set_wallet()`, or a new Client. HTTP `403` continues to raise
+`HpsiMcpAuthError`.
+
+Configuration errors use a summary/reason/fix layout. Do not retry a Client
+that has opened its circuit before replacing its API Key or Wallet.
 
 ## Degraded responses
 
@@ -214,20 +224,17 @@ therefore a normal, recoverable outcome, not a client bug.
 wallet-less agent. That rail is register-then-pay; `register_account()` above
 covers the registration half without a human.
 
-Without a wallet the SDK raises `HpsiMcpPaymentError`, which carries the
-challenge so you can pay it with your own x402 client:
-
-| Attribute | Meaning |
-| --- | --- |
-| `accepts` | Payment options: `scheme`, `network`, `asset`, `amount`, `payTo` |
-| `tool` | Tool the challenge is for |
-| `price` | Display price, e.g. `"$0.10"` |
-| `response_text` | Raw 402 body |
+Without a wallet the SDK does not retry a `402`. It raises
+`HpsiMcpConfigError` and opens the Client's authentication circuit. Configure
+a wallet with `set_wallet()`, replace the API key with `set_api_key()`, or
+create a new Client before trying again.
 
 With a wallet configured, the client signs the challenge and repeats the
 request once. It never pays pre-emptively (the free call is attempted first),
 never retries a second time, and refuses any challenge above
-`max_price_usdc` (default `$1.00`). Signing is local — the key is not sent.
+`max_price_usdc` (default `$1.00`). If signing fails or the paid retry still
+returns `402`, the circuit opens and `HpsiMcpConfigError` is raised. Signing
+is local — the key is not sent.
 
 ## Scope
 

@@ -7,7 +7,7 @@ the endpoint that's actually reachable without a browser session.
 import httpx
 import pytest
 
-from hpsilab_mcp import HpsiMcpAuthError, HpsiMcpClient, HpsiMcpRateLimitError
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError, HpsiMcpRateLimitError
 
 ACCOUNT_KEY = "hpsi_" + "z" * 43
 
@@ -70,5 +70,5 @@ def test_resend_verification_without_an_account_key_raises_auth_error():
         ),
     )
 
-    with pytest.raises(HpsiMcpAuthError):
+    with pytest.raises(HpsiMcpConfigError):
         client.resend_verification_email()

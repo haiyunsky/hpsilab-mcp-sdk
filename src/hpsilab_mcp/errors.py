@@ -10,12 +10,12 @@ class HpsiMcpError(Exception):
 
 
 class HpsiMcpConfigError(HpsiMcpError):
-    """Raised for a client misconfiguration caught before any request is
-    sent — currently just `HpsiMcpClient()` built with neither `api_key` nor
-    a resolvable wallet. Anonymous free access was retired (API key is
-    mandatory), so there is no HTTP response to attach; this is a plain
-    programming-error signal, not `HpsiMcpAPIError` and its status_code/
-    response_text/body fields, which all assume a request was actually sent.
+    """Raised when the client cannot make authenticated requests.
+
+    This includes invalid construction (neither an API key nor a wallet) and
+    the authentication circuit breaker opened by an unresolved HTTP 401/402.
+    It remains a plain configuration signal rather than `HpsiMcpAPIError`;
+    callers must reconfigure or replace the client before trying again.
     """
 
 
@@ -99,11 +99,15 @@ class HpsiMcpPaymentError(HpsiMcpAPIError):
         *,
         status_code: Optional[int] = None,
         response_text: Optional[str] = None,
+        body: Optional[dict] = None,
         accepts: Optional[list] = None,
         tool: Optional[str] = None,
         price: Optional[str] = None,
     ) -> None:
-        super().__init__(message, status_code=status_code, response_text=response_text)
+        # Keep the complete challenge available to payment-aware callers, but
+        # never fold it into Exception.args / str(exc). Tracebacks, SDK logs,
+        # and ordinary console output therefore contain only `message`.
+        super().__init__(message, status_code=status_code, response_text=response_text, body=body)
         self.accepts = accepts or []
         self.tool = tool
         self.price = price
