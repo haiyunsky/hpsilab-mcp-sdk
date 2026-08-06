@@ -2,7 +2,104 @@
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+import re
+from copy import deepcopy
+from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
+
+
+_REDACTED = "[REDACTED]"
+_SENSITIVE_FIELD_NAMES = frozenset(
+    {
+        "apikey",
+        "accesstoken",
+        "authorization",
+        "clientsecret",
+        "credential",
+        "mnemonic",
+        "paymentsignature",
+        "privatekey",
+        "recoveryphrase",
+        "refreshtoken",
+        "secret",
+        "seedphrase",
+        "xpayment",
+    }
+)
+_SENSITIVE_TEXT_PATTERNS = (
+    re.compile(
+        r"(?i)\b(?:api[_-]?key|access[_-]?token|authorization|client[_-]?secret|"
+        r"credential|private[_-]?key|mnemonic|refresh[_-]?token|secret|"
+        r"seed[_-]?phrase|recovery[_-]?phrase|payment[_-]?signature|x[_-]?payment)"
+        r"\b\s*[:=]\s*[\"']?[^,\s\"'}]+"
+    ),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
+    re.compile(r"(?i)\bhpsi_[A-Za-z0-9_-]+"),
+    re.compile(r"(?i)\b0x[0-9a-f]{64}\b"),
+    re.compile(r"(?i)\b0x[0-9a-f]{40}\b"),
+    re.compile(r"(?i)(https://hpsilab\.com/(?:register|pricing))(?:\?[^\s]+|#[^\s]+)"),
+)
+
+
+def redact_sensitive_text(value: str) -> str:
+    """Remove credential and wallet-shaped values from diagnostic text."""
+    redacted = value
+    for pattern in _SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(r"\1" if pattern.groups else _REDACTED, redacted)
+    return redacted
+
+
+def sanitize_response_text(value: Optional[str]) -> Optional[str]:
+    """Redact structured JSON responses as data and other text by pattern."""
+    if value is None:
+        return None
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return redact_sensitive_text(value)
+    return json.dumps(sanitize_sensitive_data(decoded), ensure_ascii=False, separators=(",", ":"))
+
+
+def sanitize_sensitive_data(value: Any) -> Any:
+    """Return a detached, recursively redacted copy of response data."""
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            normalized_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            sanitized[key] = _REDACTED if normalized_key in _SENSITIVE_FIELD_NAMES else sanitize_sensitive_data(item)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_sensitive_data(item) for item in value)
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    return deepcopy(value)
+
+
+def safe_public_url(value: Optional[str], *, fallback: Optional[str] = None) -> Optional[str]:
+    """Allow only public HPSILab HTTPS URLs and discard query secrets."""
+    if not value:
+        return fallback
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return fallback
+    try:
+        port = parsed.port
+    except ValueError:
+        return fallback
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "hpsilab.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or parsed.path.rstrip("/") not in {"/register", "/pricing"}
+    ):
+        return fallback
+    return urlunsplit(("https", "hpsilab.com", parsed.path, "", ""))
 
 
 class HpsiMcpError(Exception):
@@ -38,15 +135,12 @@ class HpsiMcpAPIError(HpsiMcpError):
         response_text: Optional[str] = None,
         body: Optional[dict] = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(redact_sensitive_text(message))
         self.status_code = status_code
-        self.response_text = response_text
-        # The parsed response body, verbatim - backend is the single source
-        # of truth for the error contract (docs/429-401-error-contract-spec.md);
-        # named attributes on subclasses below promote the common fields for
-        # convenience, but `body` guarantees nothing the backend sent is lost,
-        # including anything added server-side after this SDK version shipped.
-        self.body = body or {}
+        self.response_text = sanitize_response_text(response_text)
+        # Preserve response context for callers while removing credentials,
+        # payment signatures, private-key fields, and wallet-shaped values.
+        self.body = sanitize_sensitive_data(body or {})
 
 
 class HpsiMcpAuthError(HpsiMcpAPIError):
@@ -57,8 +151,8 @@ class HpsiMcpAuthError(HpsiMcpAPIError):
     backend/app/dependencies/auth.py::NotAuthenticatedError) - all three are
     `None` for every other 401/403, including an expired token, by design
     (docs/429-401-error-contract-spec.md section 2.1: a real account holder
-    with a stale token should not be pitched a signup link). `body` carries
-    the complete raw response either way.
+    with a stale token should not be pitched a signup link). `body` carries a
+    recursively redacted copy of the response.
     """
 
     def __init__(
@@ -73,9 +167,9 @@ class HpsiMcpAuthError(HpsiMcpAPIError):
         upgrade_message: Optional[str] = None,
     ) -> None:
         super().__init__(message, status_code=status_code, response_text=response_text, body=body)
-        self.register_url = register_url
-        self.pricing_url = pricing_url
-        self.upgrade_message = upgrade_message
+        self.register_url = safe_public_url(register_url)
+        self.pricing_url = safe_public_url(pricing_url)
+        self.upgrade_message = redact_sensitive_text(upgrade_message) if upgrade_message else None
 
 
 class HpsiMcpPaymentError(HpsiMcpAPIError):
@@ -108,9 +202,9 @@ class HpsiMcpPaymentError(HpsiMcpAPIError):
         # never fold it into Exception.args / str(exc). Tracebacks, SDK logs,
         # and ordinary console output therefore contain only `message`.
         super().__init__(message, status_code=status_code, response_text=response_text, body=body)
-        self.accepts = accepts or []
-        self.tool = tool
-        self.price = price
+        self.accepts = sanitize_sensitive_data(accepts or [])
+        self.tool = redact_sensitive_text(tool) if tool else None
+        self.price = redact_sensitive_text(price) if price else None
 
 
 class HpsiMcpRateLimitError(HpsiMcpAPIError):
@@ -133,8 +227,7 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
       in case a caller wants the backend's exact original values rather than
       the normalized URL/message split above.
 
-    `body` still carries the complete raw response for anything not promoted
-    to a named attribute here.
+    `body` carries the remaining response fields after recursive redaction.
     """
 
     def __init__(
@@ -154,14 +247,14 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         upgrade_hint: Optional[str] = None,
     ) -> None:
         super().__init__(message, status_code=status_code, response_text=response_text, body=body)
-        self.tool = tool
+        self.tool = redact_sensitive_text(tool) if tool else None
         self.limit = limit
         self.window = window
-        self.register_url = register_url
-        self.pricing_url = pricing_url
-        self.upgrade_message = upgrade_message
-        self.register = register
-        self.upgrade_hint = upgrade_hint
+        self.register_url = safe_public_url(register_url)
+        self.pricing_url = safe_public_url(pricing_url)
+        self.upgrade_message = redact_sensitive_text(upgrade_message) if upgrade_message else None
+        self.register = safe_public_url(register)
+        self.upgrade_hint = redact_sensitive_text(upgrade_hint) if upgrade_hint else None
 
 
 class HpsiMcpResponseError(HpsiMcpAPIError):

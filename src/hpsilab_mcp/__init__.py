@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 # the base must track pyproject's version — tests/test_version.py fails if it
 # drifts — and the `+source` local segment keeps the two cases distinguishable
 # in the request logs.
-_FALLBACK_VERSION = "0.12.1+source"
+_FALLBACK_VERSION = "0.12.2+source"
 
 
 def _load_version() -> str:

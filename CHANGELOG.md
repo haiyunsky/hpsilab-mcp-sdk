@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.12.2 - 2026-08-06
+
+### Security
+
+* Redact API keys, authorization values, private-key fields, payment
+  signatures, mnemonic fields, and wallet-shaped values from exception
+  messages and stored response context.
+* Disconnect transport exceptions from their underlying `httpx.Request` so
+  structured exception collectors cannot recover request headers.
+* Remove wallet addresses from `X402Wallet.__repr__()` and replace private-key
+  parser failures with a fixed, unchained error.
+* Accept only public `https://hpsilab.com` registration links in warnings and
+  remove query strings and fragments before display.
+* Exclude repository-only `.gitignore` and `CHANGELOG.md` files from release
+  artifacts.
+
 ## v0.12.1 - 2026-08-06
 
 ### Breaking

@@ -20,6 +20,8 @@ from .errors import (
     HpsiMcpRateLimitError,
     HpsiMcpResponseError,
     HpsiMcpTimeoutError,
+    redact_sensitive_text,
+    safe_public_url,
 )
 from .payments import X402Wallet, wallet_from_env
 from .tracking import build_tracking_headers
@@ -108,6 +110,11 @@ class HpsiMcpClient:
 
     def close(self) -> None:
         self._client.close()
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostic safety
+        api_key_state = "configured" if self._api_key else "not-configured"
+        wallet_state = "configured" if self._wallet is not None else "not-configured"
+        return f"<HpsiMcpClient api_key={api_key_state} wallet={wallet_state}>"
 
     def set_api_key(self, api_key: Optional[str]) -> None:
         """Replace the API key and reset this client's authentication breaker."""
@@ -352,7 +359,7 @@ class HpsiMcpClient:
     ) -> None:
         message = f"""Authentication failed (HTTP {response.status_code}).
 
-{self._error_message(response)}
+{redact_sensitive_text(self._error_message(response))}
 
 Fix:
     client.set_api_key("NEW_API_KEY")
@@ -374,14 +381,20 @@ Fix:
         headers = self._tool_headers(tool_name) or {}
         if extra:
             headers = {**headers, **extra}
+        failure: Optional[str] = None
         try:
-            return self._client.request(
+            response = self._client.request(
                 method, path, params=params, json=json, headers=headers or None
             )
-        except httpx.TimeoutException as exc:
-            raise HpsiMcpTimeoutError("Request timed out.") from exc
-        except httpx.RequestError as exc:
-            raise HpsiMcpConnectionError("Request failed before a response was received.") from exc
+        except httpx.TimeoutException:
+            failure = "timeout"
+        except httpx.RequestError:
+            failure = "connection"
+        if failure == "timeout":
+            raise HpsiMcpTimeoutError("Request timed out.")
+        if failure == "connection":
+            raise HpsiMcpConnectionError("Request failed before a response was received.")
+        return response
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code < 400:
@@ -487,14 +500,18 @@ Fix:
         )
 
     def _decode_json(self, response: httpx.Response) -> Any:
+        decode_failed = False
         try:
-            return response.json()
-        except ValueError as exc:
+            result = response.json()
+        except ValueError:
+            decode_failed = True
+        if decode_failed:
             raise HpsiMcpResponseError(
                 "API response was not valid JSON.",
                 status_code=response.status_code,
                 response_text=response.text,
-            ) from exc
+            )
+        return result
 
     def _error_message(self, response: httpx.Response) -> str:
         try:
@@ -573,7 +590,10 @@ Fix:
             candidate = body.get("register")
         if isinstance(candidate, str) and candidate:
             register_url = candidate
-        return register_url
+        return (
+            safe_public_url(register_url, fallback="https://hpsilab.com/register")
+            or "https://hpsilab.com/register"
+        )
 
     def _warn_anon_payment_required(self, price: Optional[str], response: httpx.Response) -> None:
         """Surface the wallet-free way out of a 402 to the human running this.
@@ -681,13 +701,18 @@ def register(
         tool="register_account",
     )
     headers["User-Agent"] = _USER_AGENT
+    failure: Optional[str] = None
     try:
         with httpx.Client(base_url=base_url.rstrip("/"), transport=transport, timeout=timeout) as http:
             response = http.post("/api/agent/register", json={"email": email}, headers=headers)
-    except httpx.TimeoutException as exc:
-        raise HpsiMcpTimeoutError("Request timed out.") from exc
-    except httpx.RequestError as exc:
-        raise HpsiMcpConnectionError("Request failed before a response was received.") from exc
+    except httpx.TimeoutException:
+        failure = "timeout"
+    except httpx.RequestError:
+        failure = "connection"
+    if failure == "timeout":
+        raise HpsiMcpTimeoutError("Request timed out.")
+    if failure == "connection":
+        raise HpsiMcpConnectionError("Request failed before a response was received.")
 
     if response.status_code >= 400:
         try:
@@ -701,7 +726,14 @@ def register(
             response_text=response.text,
         )
 
+    decode_failed = False
     try:
-        return response.json()
-    except ValueError as exc:
-        raise HpsiMcpResponseError("Registration response was not valid JSON.") from exc
+        result = response.json()
+    except ValueError:
+        decode_failed = True
+    if decode_failed:
+        raise HpsiMcpResponseError(
+            "Registration response was not valid JSON.",
+            response_text=response.text,
+        )
+    return result

@@ -189,7 +189,9 @@ The SDK exposes typed exceptions:
 * `HpsiMcpRateLimitError`
 * `HpsiMcpResponseError`
 
-API errors include `status_code` and `response_text` when available.
+API errors include `status_code` and redacted `response_text` when available.
+Sensitive credential, signing, mnemonic, and wallet-shaped values are removed
+from exception messages and stored response context.
 
 `HpsiMcpConfigError` is also raised by the authentication circuit breaker.
 After the first unresolved HTTP `401` or `402`, later calls on that Client

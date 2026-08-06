@@ -78,7 +78,14 @@ class X402Wallet:
             # made 0.6.0's bad extra hard to read.
             raise ImportError(f"{_INSTALL_HINT} (underlying import error: {exc})") from exc
 
-        account = Account.from_key(key)
+        try:
+            account = Account.from_key(key)
+        except Exception:
+            # Third-party parsers may retain or echo their input on failure.
+            # Replace the exception and chain before it reaches logs or APM.
+            raise ValueError("The configured EVM private key is invalid.") from None
+        finally:
+            key = ""
         self.address: str = account.address
         self.max_price_usdc = max_price_usdc
 
@@ -106,7 +113,7 @@ class X402Wallet:
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         cap = "uncapped" if self.max_price_usdc is None else f"max ${self.max_price_usdc:g}/call"
-        return f"<X402Wallet {self.address[:10]}… {cap}>"
+        return f"<X402Wallet address=[REDACTED] {cap}>"
 
 
 def wallet_from_env() -> Optional[X402Wallet]:

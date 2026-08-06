@@ -4,7 +4,12 @@ import warnings
 import httpx
 
 from hpsilab_mcp import HpsiMcpClient
-from hpsilab_mcp.errors import HpsiMcpConfigError, HpsiMcpRateLimitError
+from hpsilab_mcp.errors import (
+    HpsiMcpConfigError,
+    HpsiMcpConnectionError,
+    HpsiMcpRateLimitError,
+    HpsiMcpResponseError,
+)
 
 # Anonymous construction was retired — HpsiMcpClient() now requires an
 # api_key or a wallet. Most tests here don't care which identity is used,
@@ -153,6 +158,43 @@ class HpsiMcpClientTests(unittest.TestCase):
         self.assertIn("Unauthorized", str(context.exception))
         client.close()
 
+    def test_client_repr_does_not_expose_credentials_or_endpoint(self) -> None:
+        client = HpsiMcpClient(
+            base_url="https://example.invalid/private-path?token=sensitive",
+            api_key="hpsi_sensitive_value",
+        )
+
+        rendered = repr(client)
+        self.assertNotIn("sensitive", rendered)
+        self.assertNotIn("example.invalid", rendered)
+        self.assertIn("api_key=configured", rendered)
+        client.close()
+
+    def test_auth_breaker_redacts_backend_error_message(self) -> None:
+        client = HpsiMcpClient(
+            api_key=_KEY,
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    401,
+                    json={
+                        "detail": (
+                            "Rejected Bearer sensitive-token for "
+                            "0x1111111111111111111111111111111111111111"
+                        )
+                    },
+                )
+            ),
+        )
+
+        with self.assertRaises(HpsiMcpConfigError) as caught:
+            client.get_option_pressure("SPY")
+
+        rendered = f"{caught.exception!s} {caught.exception!r}"
+        self.assertNotIn("sensitive-token", rendered)
+        self.assertNotIn("1111111111111111111111111111111111111111", rendered)
+        self.assertIn("[REDACTED]", rendered)
+        client.close()
+
     def test_auth_circuit_blocks_later_calls_until_api_key_is_reconfigured(self) -> None:
         calls = []
 
@@ -253,7 +295,8 @@ class HpsiMcpClientTests(unittest.TestCase):
                 client.get_equity_curve("NVDA")
 
         self.assertEqual(len(caught), 1)
-        self.assertIn("hpsilab.com/register?src=eu", str(caught[0].message))
+        self.assertIn("hpsilab.com/register", str(caught[0].message))
+        self.assertNotIn("src=eu", str(caught[0].message))
         client.close()
 
     def test_anon_rate_limit_warning_falls_back_to_flat_register_field(self) -> None:
@@ -279,7 +322,63 @@ class HpsiMcpClientTests(unittest.TestCase):
                 client.get_equity_curve("NVDA")
 
         self.assertEqual(len(caught), 1)
-        self.assertIn("hpsilab.com/register?src=flat", str(caught[0].message))
+        self.assertIn("hpsilab.com/register", str(caught[0].message))
+        self.assertNotIn("src=flat", str(caught[0].message))
+        client.close()
+
+    def test_warning_rejects_untrusted_registration_url(self) -> None:
+        client = HpsiMcpClient(
+            wallet=_FakeWallet(),
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    429,
+                    json={
+                        "message": "Daily limit reached.",
+                        "register": "https://example.invalid/collect?token=sensitive",
+                    },
+                )
+            ),
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpRateLimitError):
+                client.get_equity_curve("NVDA")
+
+        warning = str(caught[0].message)
+        self.assertIn("https://hpsilab.com/register", warning)
+        self.assertNotIn("example.invalid", warning)
+        self.assertNotIn("sensitive", warning)
+        client.close()
+
+    def test_network_error_does_not_retain_request_exception_chain(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("failed", request=request)
+
+        client = HpsiMcpClient(api_key="hpsi_sensitive_value", transport=httpx.MockTransport(handler))
+        with self.assertRaises(HpsiMcpConnectionError) as caught:
+            client.get_equity_curve("NVDA")
+
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn("sensitive", repr(caught.exception))
+        client.close()
+
+    def test_invalid_json_does_not_retain_decoder_exception_or_sensitive_text(self) -> None:
+        client = HpsiMcpClient(
+            api_key=_KEY,
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, text="Bearer sensitive-token {invalid")
+            ),
+        )
+
+        with self.assertRaises(HpsiMcpResponseError) as caught:
+            client.get_equity_curve("NVDA")
+
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn("sensitive-token", caught.exception.response_text or "")
+        self.assertIn("[REDACTED]", caught.exception.response_text or "")
         client.close()
 
     def test_rate_limit_error_carries_full_backend_body_as_structured_fields(self) -> None:
@@ -318,7 +417,7 @@ class HpsiMcpClientTests(unittest.TestCase):
         self.assertEqual(error.upgrade_message, "Register free for 3x the quota: https://hpsilab.com/register")
         self.assertEqual(error.register, "https://hpsilab.com/register")
         self.assertEqual(error.upgrade_hint, "Upgrade at https://hpsilab.com/pricing")
-        # Nothing lost even beyond the promoted attributes.
+        # Non-sensitive fields remain available beyond promoted attributes.
         self.assertEqual(error.body, body)
         client.close()
 

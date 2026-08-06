@@ -232,6 +232,17 @@ class WalletConstructionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             X402Wallet("")
 
+    def test_wallet_repr_does_not_expose_its_address(self) -> None:
+        from hpsilab_mcp import X402Wallet
+
+        wallet = X402Wallet.__new__(X402Wallet)
+        wallet.address = "0x1111111111111111111111111111111111111111"
+        wallet.max_price_usdc = 1.0
+
+        rendered = repr(wallet)
+        self.assertNotIn("111111", rendered)
+        self.assertIn("[REDACTED]", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
