@@ -12,7 +12,7 @@ import warnings
 import httpx
 
 from hpsilab_mcp import HpsiMcpClient
-from hpsilab_mcp.errors import HpsiMcpConfigError
+from hpsilab_mcp.errors import HpsiMcpConfigError, HpsiMcpPaymentError
 
 CHALLENGE = {
     "x402Version": 2,
@@ -52,19 +52,26 @@ class PaymentFlowTests(unittest.TestCase):
         api_key is set (construction requires api_key or wallet — see
         HpsiMcpClient.__init__) — an already-registered account whose quota
         this call exceeds, not an unidentified caller. The message should
-        offer what's actually still available: pay per call, or upgrade."""
+        offer what's actually still available: pay per call, or upgrade.
+
+        Raised as a payment error rather than a configuration one: the key is
+        valid and the remedy is money. It used to surface as `HpsiMcpConfigError`
+        because `_trip_auth_circuit` ran before the payment branch could, which
+        also threw away the challenge the caller needed in order to pay."""
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(402, json=CHALLENGE)
 
         client = HpsiMcpClient(api_key="hpsi_real", transport=httpx.MockTransport(handler))
 
-        with self.assertRaises(HpsiMcpConfigError) as caught:
+        with self.assertRaises(HpsiMcpPaymentError) as caught:
             client.get_monte_carlo("NVDA")
 
         error = caught.exception
-        self.assertIn("HTTP 402", str(error))
-        self.assertIn("client.set_wallet(wallet)", str(error))
+        self.assertIn("HpsiMcpClient(wallet=X402Wallet(...))", str(error))
+        self.assertIn("hpsilab.com/pricing", str(error))
+        # The offer survives, so a caller with their own x402 client can settle it.
+        self.assertTrue(error.accepts)
         client.close()
 
     def test_402_warns_a_wallet_only_caller_the_way_429_does(self) -> None:
@@ -113,7 +120,7 @@ class PaymentFlowTests(unittest.TestCase):
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            with self.assertRaises(HpsiMcpConfigError):
+            with self.assertRaises(HpsiMcpPaymentError):
                 client.get_monte_carlo("NVDA")
 
         self.assertEqual([w for w in caught if "register_account" in str(w.message)], [])
@@ -165,20 +172,32 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(wallet.calls, 1)
         client.close()
 
-    def test_final_402_trips_breaker_and_blocks_all_later_requests(self) -> None:
+    def test_a_priced_call_does_not_disable_the_rest_of_the_client(self) -> None:
+        """One tool being priced says nothing about the next one.
+
+        This used to trip the auth breaker, so a keyed caller who hit a single
+        Pro tool's paywall had every later call — including free tools —
+        refused locally without ever reaching the network. The wallet-drain
+        guard that the breaker exists for lives on the *post-payment* 402
+        instead (see `test_a_second_402_is_raised_rather_than_paid_again`),
+        which is the only 402 that means "paying did not resolve this"."""
         calls = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal calls
             calls += 1
-            return httpx.Response(402, json=CHALLENGE)
+            if request.url.path.endswith("/monte_carlo/NVDA"):
+                return httpx.Response(402, json=CHALLENGE)
+            return httpx.Response(200, json={"symbol": "NVDA"})
 
         client = HpsiMcpClient(api_key="hpsi_real", transport=httpx.MockTransport(handler))
-        with self.assertRaises(HpsiMcpConfigError):
+        with self.assertRaises(HpsiMcpPaymentError):
             client.get_monte_carlo("NVDA")
-        with self.assertRaises(HpsiMcpConfigError):
-            client.get_ai_prediction("NVDA")
-        self.assertEqual(calls, 1)
+
+        # The next call still goes out, and succeeds.
+        self.assertEqual(client.get_ai_prediction("NVDA"), {"symbol": "NVDA"})
+        self.assertEqual(calls, 2)
+        self.assertFalse(client._auth_failed)
         client.close()
 
     def test_a_refused_challenge_propagates_untouched(self) -> None:

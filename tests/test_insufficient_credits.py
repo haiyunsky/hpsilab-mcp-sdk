@@ -22,6 +22,7 @@ import pytest
 
 from hpsilab_mcp import (
     HpsiMcpAuthError,
+    HpsiMcpPaymentError,
     HpsiMcpClient,
     HpsiMcpConfigError,
     HpsiMcpInsufficientCreditsError,
@@ -211,12 +212,15 @@ def test_a_403_with_no_body_does_not_crash_the_client():
 
 
 def test_a_402_with_no_body_is_still_handled():
-    """Not a Credits refusal (no body says so), so it keeps the old unpayable-402
-    behaviour rather than being misreported as an empty balance."""
+    """Nothing in the body says "out of Credits", so it is a payment-required
+    response the client could not parse — reported as one, not misreported as
+    an empty balance and not treated as a broken credential."""
     client = _client(httpx.Response(402, content=b"not json at all"))
 
-    with pytest.raises(HpsiMcpConfigError):
+    with pytest.raises(HpsiMcpPaymentError) as caught:
         client.get_monte_carlo("NVDA")
+
+    assert not isinstance(caught.value, HpsiMcpInsufficientCreditsError)
 
 
 def test_the_error_message_reaches_a_human():

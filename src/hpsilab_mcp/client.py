@@ -333,16 +333,23 @@ class HpsiMcpClient:
             # A 402 is retryable exactly once, and only after a configured
             # wallet successfully produces payment headers.
             #
-            # `not self._is_insufficient_credits(response)` is what keeps that
-            # true now that the API answers "out of Credits" on 402 as well. That
-            # body is not a payment offer — it has no `accepts` — so a wallet has
-            # nothing to sign, and handing it one means `payment_headers` raises,
-            # `_trip_auth_circuit` fires, and an empty balance is reported to the
-            # caller as a permanently broken client that must be reconstructed.
+            # The condition is deliberately "there is something settleable
+            # here", not "the status was 402". Two different things arrive on
+            # 402 and only one of them can be paid:
+            #
+            # * out of Credits — no `accepts`, so a wallet has nothing to sign;
+            #   handing it one means `payment_headers` raises and an empty
+            #   balance is reported as a permanently broken client;
+            # * a malformed offer (`x402Version` and no options) — equally
+            #   unsignable, and equally not the caller's fault.
+            #
+            # Requiring a non-empty `accepts` covers both without enumerating
+            # them, and is the same discriminator the backend, the MCP server
+            # and the frontend apply (see `contracts/error_contract_fixtures.json`).
             if (
                 response.status_code == 402
                 and self._wallet is not None
-                and not self._is_insufficient_credits(response)
+                and self._has_settleable_offer(response)
             ):
                 try:
                     payment_headers = self._wallet.payment_headers(response)
@@ -354,6 +361,20 @@ class HpsiMcpClient:
                     self._trip_auth_circuit(response)
                 if payment_headers:
                     response = self._send(method, path, params, tool_name, extra=payment_headers)
+                    # Paid, and still refused. This is the one 402 that really
+                    # is a broken client rather than a priced call: the wallet
+                    # signed, the server took the header and answered 402
+                    # anyway, so repeating cannot help and another attempt
+                    # would just sign again. One payment per logical call, then
+                    # stop — otherwise a server stuck on 402 drains the wallet.
+                    #
+                    # Every *other* 402 leaves the client usable; see
+                    # `_raise_for_status`.
+                    if (
+                        response.status_code == 402
+                        and not self._is_insufficient_credits(response)
+                    ):
+                        self._trip_auth_circuit(response)
 
             self._raise_for_status(response)
             return self._decode_json(response)
@@ -365,6 +386,23 @@ class HpsiMcpClient:
     def _ensure_auth_circuit_closed(self) -> None:
         if self._auth_failed:
             raise HpsiMcpConfigError(self._auth_failure_message or _MISSING_AUTH_MESSAGE)
+
+    @staticmethod
+    def _has_settleable_offer(response: httpx.Response) -> bool:
+        """True when the body carries payment options a wallet could sign.
+
+        `accepts` being a non-empty list *is* the offer. A body without it —
+        whatever else it says — leaves nothing to settle, so attempting payment
+        against it can only fail.
+        """
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        if not isinstance(body, dict):
+            return False
+        accepts = body.get("accepts")
+        return isinstance(accepts, list) and bool(accepts)
 
     def _trip_auth_circuit(
         self,
@@ -435,7 +473,28 @@ Fix:
                 register_url=body.get("register"),
             )
 
-        if response.status_code in {401, 402}:
+        # A 402 that is not a Credits refusal is a payment offer, and it is
+        # raised as one *before* the circuit breaker below can see it.
+        #
+        # The ordering used to be the other way round, which made
+        # `_payment_error` unreachable for status 402: `_trip_auth_circuit`
+        # raises unconditionally, so every x402 challenge came out as
+        # `HpsiMcpConfigError` — "this client is misconfigured, build a new
+        # one" — and the challenge, including `accepts`, was thrown away. A
+        # caller without a wallet could not see what they were being asked to
+        # pay, and a caller who then attached one had a client that was already
+        # latched shut.
+        #
+        # A payment-required response is not a bad credential. The key is
+        # valid, the account is real, and the remedy is money rather than
+        # reconfiguration — the same reasoning that already moved the Credits
+        # refusal ahead of the breaker.
+        if response.status_code == 402:
+            error = self._payment_error(message, response)
+            if self._api_key is None:
+                self._warn_anon_payment_required(error.price, response)
+            raise error
+        if response.status_code == 401:
             self._trip_auth_circuit(response)
         if response.status_code == 403:
             body = self._response_body(response)
@@ -449,11 +508,6 @@ Fix:
                 pricing_url=conv["pricing_url"],
                 upgrade_message=conv["upgrade_message"],
             )
-        if response.status_code == 402:
-            error = self._payment_error(message, response)
-            if self._api_key is None:
-                self._warn_anon_payment_required(error.price, response)
-            raise error
         if response.status_code == 429:
             if self._api_key is None:
                 self._warn_anon_rate_limited(response)
