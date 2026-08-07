@@ -36,6 +36,7 @@ from .errors import (
     HpsiMcpError,
     HpsiMcpPaymentError,
     HpsiMcpRateLimitError,
+    HpsiMcpInsufficientCreditsError,
     HpsiMcpResponseError,
     HpsiMcpTimeoutError,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "HpsiMcpConnectionError",
     "HpsiMcpError",
     "HpsiMcpPaymentError",
+    "HpsiMcpInsufficientCreditsError",
     "HpsiMcpRateLimitError",
     "HpsiMcpResponseError",
     "HpsiMcpTimeoutError",

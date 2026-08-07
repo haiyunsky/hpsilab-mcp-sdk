@@ -257,5 +257,43 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         self.upgrade_hint = redact_sensitive_text(upgrade_hint) if upgrade_hint else None
 
 
+class HpsiMcpInsufficientCreditsError(HpsiMcpAPIError):
+    """Raised when the account is out of Credits — HTTP 403 with
+    ``error: "insufficient_credits"``.
+
+    Deliberately **not** a subclass of :class:`HpsiMcpRateLimitError`, and not
+    raised on 429. "You are calling too fast" and "you have no balance left"
+    need opposite responses from a caller: the first is fixed by waiting, the
+    second never is. Conflating them is what makes a client sit in a retry loop
+    against an empty account.
+
+    It arrives on 403 rather than 402 because 402 on this API is the x402
+    pay-per-call challenge, whose body is a signed payment offer this client
+    will try to settle on-chain.
+
+    * ``credits_required`` — what the call would have cost.
+    * ``credits_remaining`` — what the account has.
+    * ``upgrade_url`` — where to add more.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        response_text: Optional[str] = None,
+        body: Optional[dict] = None,
+        credits_required: Optional[int] = None,
+        credits_remaining: Optional[int] = None,
+        upgrade_url: Optional[str] = None,
+        register_url: Optional[str] = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, response_text=response_text, body=body)
+        self.credits_required = credits_required
+        self.credits_remaining = credits_remaining
+        self.upgrade_url = safe_public_url(upgrade_url)
+        self.register_url = safe_public_url(register_url)
+
+
 class HpsiMcpResponseError(HpsiMcpAPIError):
     """Raised when the API response cannot be decoded as expected."""

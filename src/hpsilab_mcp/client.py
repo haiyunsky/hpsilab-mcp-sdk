@@ -14,6 +14,7 @@ from . import __version__
 from .errors import (
     HpsiMcpAPIError,
     HpsiMcpAuthError,
+    HpsiMcpInsufficientCreditsError,
     HpsiMcpConfigError,
     HpsiMcpConnectionError,
     HpsiMcpPaymentError,
@@ -405,6 +406,21 @@ Fix:
             self._trip_auth_circuit(response)
         if response.status_code == 403:
             body = self._response_body(response)
+            # A Credits refusal shares the 403 status with "your plan does not
+            # include this tool", and the two need opposite reactions: one is
+            # fixed by adding Credits, the other by changing plan. The body is
+            # what tells them apart.
+            if body.get("error") == "insufficient_credits":
+                raise HpsiMcpInsufficientCreditsError(
+                    message,
+                    status_code=response.status_code,
+                    response_text=response.text,
+                    body=body,
+                    credits_required=body.get("credits_required"),
+                    credits_remaining=body.get("credits_remaining"),
+                    upgrade_url=body.get("upgrade_url"),
+                    register_url=body.get("register"),
+                )
             conv = self._conversion_fields(body)
             raise HpsiMcpAuthError(
                 message,

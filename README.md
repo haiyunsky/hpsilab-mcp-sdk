@@ -85,6 +85,47 @@ result = client.get_ai_prediction("TSLA")
 print(result)
 ```
 
+### Credits
+
+Usage is metered in **Credits**, not requests. One Credit is one unit of fresh
+compute; reading a cached or public result costs nothing, and a call that fails
+is never charged.
+
+| Plan | Price | Included |
+| --- | --- | --- |
+| Developer | $19/month | 2,000 Credits/month |
+| Pro | $99/month | 15,000 Credits/month |
+| Enterprise | From $2,000/month | Custom limits |
+| Anonymous Trial | — | 36 Credits / 72 hours |
+| Registered Trial | — | 100 Credits / 14 days |
+
+Every response carries what it cost:
+
+```
+X-Credits-Charged:   5
+X-Credits-Remaining: 1995
+```
+
+Per-tool prices are served live at `GET /api/credits/catalog`, and the current
+balance at `GET /api/credits/balance` — both free to call.
+
+Running out raises its own error, deliberately **not** a rate-limit error:
+waiting fixes a rate limit and never refills a balance.
+
+```python
+from hpsilab_mcp import HpsiMcpInsufficientCreditsError
+
+try:
+    client.get_monte_carlo("NVDA")
+except HpsiMcpInsufficientCreditsError as exc:
+    print(exc.credits_required, exc.credits_remaining)  # 30 12
+    print(exc.upgrade_url)                              # where to add Credits
+```
+
+Credits and rate limits are separate meters: Credits decide *whether* you may
+spend compute, RPM and concurrency decide *how fast*. A Credits refusal is an
+HTTP 403 with `error: "insufficient_credits"`, never a 429.
+
 ### Authentication failures and rate limits
 
 A `429` (rate limit / quota exceeded) raises `HpsiMcpRateLimitError` with the
