@@ -383,7 +383,7 @@ class HpsiMcpClientTests(unittest.TestCase):
 
     def test_rate_limit_error_carries_full_backend_body_as_structured_fields(self) -> None:
         # Backend is the single source of truth for the 429 contract
-        # (docs/429-401-error-contract-spec.md) - every field it sends must
+        # (docs/error-contract.md) - every field it sends must
         # be reachable on the raised exception, not just message/status_code.
         body = {
             "error": "tool_quota_exceeded",

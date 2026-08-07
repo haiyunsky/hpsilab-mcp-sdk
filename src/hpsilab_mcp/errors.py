@@ -110,9 +110,14 @@ class HpsiMcpConfigError(HpsiMcpError):
     """Raised when the client cannot make authenticated requests.
 
     This includes invalid construction (neither an API key nor a wallet) and
-    the authentication circuit breaker opened by an unresolved HTTP 401/402.
-    It remains a plain configuration signal rather than `HpsiMcpAPIError`;
-    callers must reconfigure or replace the client before trying again.
+    the authentication circuit breaker opened by an unresolved HTTP 401, or a
+    402 that could not be paid. It remains a plain configuration signal rather
+    than `HpsiMcpAPIError`; callers must reconfigure or replace the client
+    before trying again.
+
+    An "out of Credits" 402 is **not** one of these — it raises
+    :class:`HpsiMcpInsufficientCreditsError` and leaves the client usable, since
+    the credential is fine and adding Credits is all it takes to continue.
     """
 
 
@@ -150,7 +155,7 @@ class HpsiMcpAuthError(HpsiMcpAPIError):
     nudge survives as `register_url`/`pricing_url`/`upgrade_message` (see
     backend/app/dependencies/auth.py::NotAuthenticatedError) - all three are
     `None` for every other 401/403, including an expired token, by design
-    (docs/429-401-error-contract-spec.md section 2.1: a real account holder
+    (docs/error-contract.md section 2.1: a real account holder
     with a stale token should not be pitched a signup link). `body` carries a
     recursively redacted copy of the response.
     """
@@ -208,21 +213,33 @@ class HpsiMcpPaymentError(HpsiMcpAPIError):
 
 
 class HpsiMcpRateLimitError(HpsiMcpAPIError):
-    """Raised on HTTP 429 — rate limited, or a daily/monthly quota is
-    exhausted.
+    """Raised on HTTP 429 — the caller is going too fast, and nothing else.
 
-    Every business field the backend's 429 body carries is promoted onto
-    this exception (docs/429-401-error-contract-spec.md section 1.2), so a
-    caller does not have to re-parse `response_text`/`body` for the common
-    ones:
+    **This is the one error in this module that a retry can fix**, and the only
+    one for which the API supplies a wait. It never means "out of Credits" (that
+    is :class:`HpsiMcpInsufficientCreditsError`, a 402) and it is never an
+    upgrade signal: a caller that buys a bigger plan in response to a 429 has
+    paid to fix a problem that ``retry_after_seconds`` of patience fixes for
+    free.
 
-    * ``tool`` — which tool's quota was hit, when the 429 is tool-scoped.
-    * ``limit`` / ``window`` — the numeric cap and its reset window
-      (``"day"``, ``"month"``, or ``"minute"``).
+    Every business field the backend's 429 body carries is promoted onto this
+    exception, so a caller does not have to re-parse `response_text`/`body`:
+
+    * ``retry_after_seconds`` — how long to wait, from the ``Retry-After``
+      header, falling back to the body's own field. **Bound your retries**: honour
+      this value, cap the number of attempts, and give up rather than loop.
+    * ``reset_at`` — the same instant in absolute UTC, for a caller that queues
+      the retry rather than sleeping on it (where a relative delay goes stale).
+    * ``tool`` — which tool the limit applied to, when it is tool-scoped.
+    * ``limit`` / ``window`` — the numeric cap and the window it is measured
+      over (``"minute"`` for every limit this API expresses as a 429; ``"day"`` /
+      ``"month"`` appear only from a legacy request-count gate that is retired
+      while Credits is the meter).
     * ``register_url`` / ``pricing_url`` / ``upgrade_message`` — the
       registration/upgrade nudge, normalized from either shape the backend
       may send (the nested ``upgrade.{register_url,pricing_url,message}`` or
-      the flat ``register``/``upgrade_hint`` fallback).
+      the flat ``register``/``upgrade_hint`` fallback). Present only on that
+      legacy day/month form; a per-minute 429 carries no such copy, by design.
     * ``register`` / ``upgrade_hint`` — those same flat strings, unmodified,
       in case a caller wants the backend's exact original values rather than
       the normalized URL/message split above.
@@ -240,6 +257,8 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         tool: Optional[str] = None,
         limit: Optional[int] = None,
         window: Optional[str] = None,
+        retry_after_seconds: Optional[int] = None,
+        reset_at: Optional[str] = None,
         register_url: Optional[str] = None,
         pricing_url: Optional[str] = None,
         upgrade_message: Optional[str] = None,
@@ -250,6 +269,8 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         self.tool = redact_sensitive_text(tool) if tool else None
         self.limit = limit
         self.window = window
+        self.retry_after_seconds = retry_after_seconds
+        self.reset_at = redact_sensitive_text(reset_at) if reset_at else None
         self.register_url = safe_public_url(register_url)
         self.pricing_url = safe_public_url(pricing_url)
         self.upgrade_message = redact_sensitive_text(upgrade_message) if upgrade_message else None
@@ -258,7 +279,7 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
 
 
 class HpsiMcpInsufficientCreditsError(HpsiMcpAPIError):
-    """Raised when the account is out of Credits — HTTP 403 with
+    """Raised when the account is out of Credits — HTTP 402 with
     ``error: "insufficient_credits"``.
 
     Deliberately **not** a subclass of :class:`HpsiMcpRateLimitError`, and not
@@ -267,13 +288,21 @@ class HpsiMcpInsufficientCreditsError(HpsiMcpAPIError):
     second never is. Conflating them is what makes a client sit in a retry loop
     against an empty account.
 
-    It arrives on 403 rather than 402 because 402 on this API is the x402
-    pay-per-call challenge, whose body is a signed payment offer this client
-    will try to settle on-chain.
+    Nor is it a :class:`HpsiMcpPaymentError`, even though both arrive on 402.
+    That one carries a live x402 offer in ``accepts`` and a configured wallet
+    will settle it; this one carries no offer, so a wallet has nothing to sign
+    and the client must not try. The bodies are what tell them apart — see
+    ``HpsiMcpClient._is_insufficient_credits``.
+
+    An earlier release raised this on **403**, before the backend moved the
+    refusal to 402. Both are still recognised: this SDK and the API are versioned
+    independently and a caller may be pointed at either.
 
     * ``credits_required`` — what the call would have cost.
     * ``credits_remaining`` — what the account has.
     * ``upgrade_url`` — where to add more.
+    * ``register_url`` — set only for an anonymous caller, for whom registering
+      is the cheaper of the two remedies.
     """
 
     def __init__(

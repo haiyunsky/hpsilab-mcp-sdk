@@ -99,7 +99,8 @@ class HpsiMcpClient:
         self._auth_failure_message: Optional[str] = None
         # Keep the check/request/response transition atomic. Without this,
         # concurrent calls could all leave the process before the first 401 or
-        # 402 trips the breaker.
+        # unpayable 402 trips the breaker. An "out of Credits" 402 never trips
+        # it — see `_raise_for_status`.
         self._request_lock = RLock()
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
@@ -331,7 +332,18 @@ class HpsiMcpClient:
 
             # A 402 is retryable exactly once, and only after a configured
             # wallet successfully produces payment headers.
-            if response.status_code == 402 and self._wallet is not None:
+            #
+            # `not self._is_insufficient_credits(response)` is what keeps that
+            # true now that the API answers "out of Credits" on 402 as well. That
+            # body is not a payment offer — it has no `accepts` — so a wallet has
+            # nothing to sign, and handing it one means `payment_headers` raises,
+            # `_trip_auth_circuit` fires, and an empty balance is reported to the
+            # caller as a permanently broken client that must be reconstructed.
+            if (
+                response.status_code == 402
+                and self._wallet is not None
+                and not self._is_insufficient_credits(response)
+            ):
                 try:
                     payment_headers = self._wallet.payment_headers(response)
                 except Exception:
@@ -402,25 +414,31 @@ Fix:
             return
 
         message = self._error_message(response)
+
+        # Checked before the 401/402 circuit breaker below, and that ordering is
+        # the whole fix. An empty Credit balance is not an authentication
+        # problem: the API key is valid, the account is real, and topping up
+        # resolves it. Tripping the breaker would raise `HpsiMcpConfigError` and
+        # permanently disable this client object, so every later call — including
+        # the ones made after Credits are added — would fail without ever
+        # reaching the network.
+        if response.status_code in {402, 403} and self._is_insufficient_credits(response):
+            body = self._response_body(response)
+            raise HpsiMcpInsufficientCreditsError(
+                message,
+                status_code=response.status_code,
+                response_text=response.text,
+                body=body,
+                credits_required=body.get("credits_required"),
+                credits_remaining=body.get("credits_remaining"),
+                upgrade_url=body.get("upgrade_url"),
+                register_url=body.get("register"),
+            )
+
         if response.status_code in {401, 402}:
             self._trip_auth_circuit(response)
         if response.status_code == 403:
             body = self._response_body(response)
-            # A Credits refusal shares the 403 status with "your plan does not
-            # include this tool", and the two need opposite reactions: one is
-            # fixed by adding Credits, the other by changing plan. The body is
-            # what tells them apart.
-            if body.get("error") == "insufficient_credits":
-                raise HpsiMcpInsufficientCreditsError(
-                    message,
-                    status_code=response.status_code,
-                    response_text=response.text,
-                    body=body,
-                    credits_required=body.get("credits_required"),
-                    credits_remaining=body.get("credits_remaining"),
-                    upgrade_url=body.get("upgrade_url"),
-                    register_url=body.get("register"),
-                )
             conv = self._conversion_fields(body)
             raise HpsiMcpAuthError(
                 message,
@@ -444,6 +462,7 @@ Fix:
             tool = body.get("tool")
             limit = body.get("limit")
             window = body.get("window")
+            reset_at = body.get("reset_at")
             raise HpsiMcpRateLimitError(
                 message,
                 status_code=response.status_code,
@@ -452,6 +471,8 @@ Fix:
                 tool=tool if isinstance(tool, str) else None,
                 limit=limit if isinstance(limit, int) and not isinstance(limit, bool) else None,
                 window=window if isinstance(window, str) else None,
+                retry_after_seconds=self._retry_after_seconds(response, body),
+                reset_at=reset_at if isinstance(reset_at, str) else None,
                 register_url=conv["register_url"],
                 pricing_url=conv["pricing_url"],
                 upgrade_message=conv["upgrade_message"],
@@ -546,6 +567,47 @@ Fix:
                 return detail
         return f"API request failed with status {response.status_code}."
 
+    def _is_insufficient_credits(self, response: httpx.Response) -> bool:
+        """Whether this response is the "out of Credits" refusal.
+
+        Read off the body rather than the status because the status is shared:
+        402 is also the x402 payment challenge, and 403 also means "your plan
+        does not include this tool". A challenge is excluded explicitly — it
+        carries a non-empty ``accepts``, which is the offer a wallet settles, and
+        if a body ever arrived with both markers, treating it as payable (an
+        action the caller can complete) beats treating it as a dead end.
+
+        Mirrors backend ``app.core.error_contract.is_insufficient_credits`` and
+        ``mcp_server/errors.py::_is_insufficient_credits``; all three must agree,
+        because they are the same decision made at three hops of one call.
+        """
+        body = self._response_body(response)
+        accepts = body.get("accepts")
+        if isinstance(accepts, list) and accepts:
+            return False
+        return body.get("error") == "insufficient_credits"
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response, body: dict) -> Optional[int]:
+        """How long to wait, header first.
+
+        ``Retry-After`` wins over the body's ``retry_after_seconds`` because a
+        proxy or gateway may rewrite the header to reflect its own queueing, and
+        that is the number that actually governs when this request will be let
+        through. Both are accepted so a bounded retry still has something to work
+        with when only one is present.
+        """
+        raw = response.headers.get("retry-after")
+        if raw:
+            try:
+                return max(0, int(float(raw)))
+            except (TypeError, ValueError):
+                pass
+        value = body.get("retry_after_seconds")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return max(0, value)
+        return None
+
     def _response_body(self, response: httpx.Response) -> dict:
         """Parsed JSON body, or `{}` for anything that isn't a JSON object —
         never raises. Feeds `HpsiMcpAuthError.body`/`HpsiMcpRateLimitError.body`
@@ -563,7 +625,7 @@ Fix:
         message}` (preferred when present), or the flat `register`/
         `upgrade_hint` fallback. Mirrors
         mcp_server/errors.py::_conversion_from_response so the two stay in
-        sync (docs/429-401-error-contract-spec.md section 1.3)."""
+        sync (docs/error-contract.md section 1.3)."""
         upgrade = body.get("upgrade")
         upgrade = upgrade if isinstance(upgrade, dict) else {}
 
