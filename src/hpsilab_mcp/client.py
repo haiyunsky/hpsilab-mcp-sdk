@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 import warnings
 from decimal import Decimal, InvalidOperation
 from threading import RLock
@@ -21,6 +22,7 @@ from .errors import (
     HpsiMcpPaymentError,
     HpsiMcpRateLimitError,
     HpsiMcpResponseError,
+    HpsiMcpSettlementUnknownError,
     HpsiMcpTimeoutError,
     redact_sensitive_text,
     safe_public_url,
@@ -181,6 +183,11 @@ class HpsiMcpClient:
         # that works. Tripping this one stops the client paying and leaves every
         # Credits-funded call working.
         self._x402_disabled_reason: Optional[str] = None
+        # call_id -> tool, for every call whose payment outcome is unknown.
+        # These are the calls a reconciliation run has to resolve; the client
+        # keeps them rather than the caller having to scrape them out of
+        # exception text.
+        self._unresolved_settlements: dict[str, str] = {}
         self._auth_failed = False
         self._auth_failure_message: Optional[str] = None
         # Keep the check/request/response transition atomic. Without this,
@@ -222,6 +229,11 @@ class HpsiMcpClient:
         The payment policy is deliberately *not* changed. Swapping a wallet is
         a repair — the old one was empty, or its key rotated — and repairing it
         must not silently promote a `credits_only` client into one that spends.
+
+        This is also how a client latched shut by an unresolved settlement is
+        reopened, once reconciliation has said what happened to it. The record
+        of *which* calls were unresolved is deliberately not cleared: it is the
+        evidence, and a caller resuming payments still needs it.
         """
         with self._request_lock:
             if wallet is None and not self._api_key:
@@ -292,6 +304,10 @@ class HpsiMcpClient:
         with self._request_lock:
             summary = self._budget.summary(self._payment_policy)
             summary["x402_disabled_reason"] = self._x402_disabled_reason
+            # Money that may have moved without a confirmed answer. Reported
+            # separately from `session_spent_usd` (which already counts it) so a
+            # caller can tell "spent" from "spent, outcome unconfirmed".
+            summary["unresolved_settlements"] = dict(self._unresolved_settlements)
             return summary
 
     def __enter__(self) -> "HpsiMcpClient":
@@ -446,18 +462,39 @@ class HpsiMcpClient:
             self._raise_for_status(response)
             return self._decode_json(response)
 
-    def _tool_headers(self, tool_name: Optional[str]) -> Optional[dict]:
+    def _tool_headers(
+        self, tool_name: Optional[str], call_id: Optional[str] = None
+    ) -> Optional[dict]:
         """Per-request override merged on top of the client's default headers
-        (see `build_tracking_headers`) — only `X-HPSILAB-Tool` varies per call,
-        the rest (source/client/version/User-Agent/Authorization/...) stay put."""
-        if not tool_name:
+        (see `build_tracking_headers`) — only `X-HPSILAB-Tool` and
+        `X-Request-Id` vary per call, the rest (source/client/version/
+        User-Agent/Authorization/...) stay put."""
+        if not tool_name and not call_id:
             return None
-        return build_tracking_headers(
-            source=_TRACKING_SOURCE,
-            client=_TRACKING_CLIENT,
-            version=__version__,
-            tool=tool_name,
+        headers = (
+            build_tracking_headers(
+                source=_TRACKING_SOURCE,
+                client=_TRACKING_CLIENT,
+                version=__version__,
+                tool=tool_name,
+            )
+            if tool_name
+            else {}
         )
+        if call_id:
+            # The API threads one id through quote → pay → settle and enforces
+            # uniqueness on it (a settlement is unique per *logical call*, which
+            # `transaction_hash` cannot express: one call settled twice would be
+            # two different transactions). Without this header the API mints a
+            # fresh id per HTTP request, and a caller that retried a paid call
+            # would defeat the constraint built to stop exactly that.
+            #
+            # Set here rather than as a client default so it overrides any
+            # `headers={"X-Request-Id": ...}` the caller pinned at construction
+            # — a single id shared by every call would make the second paid call
+            # collide with the first.
+            headers["X-Request-Id"] = call_id
+        return headers
 
     def _get(
         self,
@@ -484,7 +521,11 @@ class HpsiMcpClient:
     ) -> Any:
         with self._request_lock:
             self._ensure_auth_circuit_closed()
-            response = self._send(method, path, params, tool_name)
+            # One id for the whole logical call — the unpaid attempt and the
+            # paid retry below are the same call, and the API's settlement
+            # ledger is unique on it (spec §12.1/§12.2).
+            call_id = f"call_{uuid.uuid4().hex}"
+            response = self._send(method, path, params, tool_name, call_id=call_id)
 
             # A 402 is retryable exactly once, and only after a configured
             # wallet successfully produces payment headers.
@@ -516,7 +557,7 @@ class HpsiMcpClient:
                     refusal = decision.reason
                 else:
                     response = self._settle_once(
-                        method, path, params, tool_name, response, decision.offer
+                        method, path, params, tool_name, response, decision.offer, call_id
                     )
 
             self._raise_for_status(response, payment_refusal=refusal)
@@ -530,6 +571,7 @@ class HpsiMcpClient:
         tool_name: Optional[str],
         challenge: httpx.Response,
         offer,
+        call_id: Optional[str] = None,
     ) -> httpx.Response:
         """Sign one offer, charge the budget, retry once. Never twice.
 
@@ -576,11 +618,14 @@ class HpsiMcpClient:
 
         self._budget.charge(offer.amount)
         try:
-            response = self._send(method, path, params, tool_name, extra=payment_headers)
+            response = self._send(
+                method, path, params, tool_name, extra=payment_headers, call_id=call_id
+            )
         except (HpsiMcpTimeoutError, HpsiMcpConnectionError):
             # The authorization went out and no answer came back. Whether it
             # settled is unknowable from here, so stop paying rather than let
             # a retry sign a second one for the same logical call.
+            self._record_unresolved_settlement(call_id, tool_name)
             self._disable_x402(
                 "a payment was sent but its outcome is unknown (the request did not complete)"
             )
@@ -593,6 +638,17 @@ class HpsiMcpClient:
         if response.status_code == 402 and not self._is_insufficient_credits(response):
             self._disable_x402("a payment was accepted by the wallet but the server still refused")
         return response
+
+    def _record_unresolved_settlement(
+        self, call_id: Optional[str], tool_name: Optional[str]
+    ) -> None:
+        """Remember a call whose payment outcome is not known.
+
+        Kept so `payment_spend_summary()` can hand the ids to whoever runs
+        reconciliation. Without them the caller knows money may have moved and
+        not for which calls, which is the state that cannot be reconciled.
+        """
+        self._unresolved_settlements[call_id or "(unassigned)"] = tool_name or ""
 
     def _disable_x402(self, reason: str) -> None:
         """Close the x402 path for this client, leaving the rest of it working.
@@ -651,8 +707,9 @@ Fix:
         tool_name: Optional[str],
         extra: Optional[Mapping[str, str]] = None,
         json: Optional[Mapping[str, Any]] = None,
+        call_id: Optional[str] = None,
     ) -> httpx.Response:
-        headers = self._tool_headers(tool_name) or {}
+        headers = self._tool_headers(tool_name, call_id) or {}
         if extra:
             headers = {**headers, **extra}
         failure: Optional[str] = None
@@ -677,6 +734,21 @@ Fix:
             return
 
         message = self._error_message(response)
+
+        # First, ahead of everything: a settlement the API cannot resolve.
+        #
+        # Nothing below may claim this response. Every other branch here ends in
+        # advice that is safe to act on — wait, top up, reconfigure, pay. This
+        # one has no safe action at all, and the two branches it most resembles
+        # (a 402 offer, a generic 5xx) both read as "try again", which is the
+        # one thing that turns an unresolved payment into two payments.
+        unresolved = self._settlement_unknown(message, response)
+        if unresolved is not None:
+            self._record_unresolved_settlement(unresolved.call_id, unresolved.tool)
+            self._disable_x402(
+                "a payment was sent and the API could not confirm whether it settled"
+            )
+            raise unresolved
 
         # Checked before the 401/402 circuit breaker below, and that ordering is
         # the whole fix. An empty Credit balance is not an authentication
@@ -762,6 +834,33 @@ Fix:
             message,
             status_code=response.status_code,
             response_text=response.text,
+        )
+
+    def _settlement_unknown(
+        self, message: str, response: httpx.Response
+    ) -> Optional[HpsiMcpSettlementUnknownError]:
+        """The response saying a payment may have gone through, or None.
+
+        Keyed on the body's `settlement_status`, not on the status code. The
+        code is the API's way of saying "this call did not produce an answer"
+        and could reasonably change or differ per transport; the field is the
+        API's way of saying *why*, and it is the part that must not be guessed
+        at. A body that does not say `unknown` is not one of these — an
+        unresolved settlement is too expensive to infer.
+        """
+        body = self._response_body(response)
+        if body.get("settlement_status") != "unknown":
+            return None
+        call_id = body.get("call_id")
+        tool = body.get("tool")
+        return HpsiMcpSettlementUnknownError(
+            message,
+            call_id=call_id if isinstance(call_id, str) else None,
+            tool=tool if isinstance(tool, str) else None,
+            settlement_status="unknown",
+            status_code=response.status_code,
+            response_text=response.text,
+            body=body,
         )
 
     def _payment_error(

@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.13.4 - 2026-08-08
+
+The client's half of "never pay twice for one call". The API's half shipped
+first: an unresolved settlement now comes back as `settlement_status:
+"unknown"` with a `call_id` and no offer, and its ledger is unique on that id.
+None of that holds if the client walks away and starts over — a fresh request
+gets a fresh id, a fresh challenge and a fresh signature, and pays again for
+work that may already have been paid for.
+
+### Added
+
+* **`HpsiMcpSettlementUnknownError`**, raised when the API says a payment may
+  have completed and could not be confirmed. It carries `call_id`, `tool` and
+  `settlement_status`.
+
+  It is deliberately **not** a subclass of `HpsiMcpAPIError`, unlike every
+  other error this SDK raises for an API response. `except HpsiMcpAPIError:
+  retry()` is the most ordinary line a caller writes, and for this one response
+  it is the line that costs money — so the error is placed where that handler
+  cannot catch it. It is meant to be loud. Crashing is cheaper than paying
+  twice.
+
+  Nothing can have depended on the previous behaviour: this response shape did
+  not exist before today.
+
+* **`X-Request-Id` on every request**, one id per logical call, shared by the
+  unpaid attempt and the paid retry. This is what makes the API's
+  uniqueness constraint apply to a *retry* rather than only to a replay of the
+  same signed payment — without it the API mints a fresh id per HTTP request,
+  and a caller that retried a paid call defeated the constraint built to stop
+  exactly that. An `X-Request-Id` pinned in the constructor's `headers=` no
+  longer reaches the wire, since one id shared by every call would make the
+  second paid call collide with the first.
+
+* **`unresolved_settlements` in `payment_spend_summary()`** — `{call_id: tool}`
+  for every call whose payment outcome is unknown, including the pre-existing
+  timeout and dropped-connection cases, which stopped the client paying but
+  never recorded *which* calls were at stake. The record survives
+  `set_wallet()`: reopening the x402 path after reconciliation is a repair, and
+  forgetting the evidence is not part of it.
+
+### Changed
+
+* An unresolved settlement closes the x402 path for that client, the same as a
+  paid retry that times out. Credits-funded calls keep working — nothing about
+  the API key failed. `client.set_wallet(wallet)` reopens it once
+  reconciliation has said what happened.
+
 ## v0.13.3 - 2026-08-08
 
 Two payment defects, both found by auditing the flow before the first real

@@ -316,12 +316,62 @@ Regardless of configuration:
   policy picks an offer and the wallet picks one independently; a multi-offer
   challenge could otherwise be approved at one price and signed at another. A
   mismatch closes the x402 path and charges nothing.
-* A payment whose outcome is unknown — the retry timed out or the connection
-  dropped — is counted as spent and closes the x402 path, rather than being
-  re-attempted.
+* A payment whose outcome is unknown — the retry timed out, the connection
+  dropped, or the API answered `settlement_status: "unknown"` — is counted as
+  spent and closes the x402 path, rather than being re-attempted. See
+  [Unresolved settlements](#unresolved-settlements) below.
+* Every request carries an `X-Request-Id`, one per logical call and shared by
+  the unpaid attempt and the paid retry. The API's settlement ledger is unique
+  on it, so one call cannot be settled by two different transactions.
 * Budgets are not refunded, and replacing the policy does not reset them.
 
 Signing happens locally; the private key never leaves your process.
+
+### Unresolved settlements
+
+A payment can leave this process and never come back with an answer — the
+facilitator timed out, or the API could not confirm what happened to it. The
+money may have moved. **Paying again is the one thing that must not happen**,
+because a second attempt signs a new authorization and buys the same call
+twice.
+
+The SDK raises `HpsiMcpSettlementUnknownError` for this, and it is deliberately
+**not** a subclass of `HpsiMcpAPIError`:
+
+```python
+from hpsilab_mcp import HpsiMcpAPIError, HpsiMcpSettlementUnknownError
+
+try:
+    data = client.get_iv_radar("NVDA")
+except HpsiMcpSettlementUnknownError as exc:
+    # Do not retry. Record exc.call_id and reconcile.
+    log.error("payment outcome unknown, call_id=%s", exc.call_id)
+except HpsiMcpAPIError:
+    retry()          # never reached for an unresolved settlement
+```
+
+`except HpsiMcpAPIError: retry()` is the most ordinary line a caller writes,
+and for this one response it is the line that costs money — so the error is
+placed where that handler cannot catch it. It is meant to be loud.
+
+The exception carries `call_id`, `tool` and `settlement_status`. **Keep the
+`call_id`**: it is what reconciliation needs to decide whether the money moved,
+and the API's ledger records the same id.
+
+Afterwards the client stops paying, and says so:
+
+```python
+client.payment_spend_summary()
+# {'session_spent_usd': '0.05', ...,
+#  'x402_disabled_reason': 'a payment was sent and the API could not confirm '
+#                          'whether it settled',
+#  'unresolved_settlements': {'call_abc123': 'get_iv_radar'}}
+```
+
+Credits-funded calls keep working — nothing about the API key failed. Once
+reconciliation has said what happened, `client.set_wallet(wallet)` reopens the
+x402 path; the `unresolved_settlements` record is kept, because a caller
+resuming payments still needs the evidence.
 
 To recover an existing Client after a `401` or unresolved `402`:
 

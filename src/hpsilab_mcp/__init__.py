@@ -12,7 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 # the base must track pyproject's version — tests/test_version.py fails if it
 # drifts — and the `+source` local segment keeps the two cases distinguishable
 # in the request logs.
-_FALLBACK_VERSION = "0.13.3+source"
+_FALLBACK_VERSION = "0.13.4+source"
 
 
 def _load_version() -> str:
@@ -38,6 +38,7 @@ from .errors import (
     HpsiMcpRateLimitError,
     HpsiMcpInsufficientCreditsError,
     HpsiMcpResponseError,
+    HpsiMcpSettlementUnknownError,
     HpsiMcpTimeoutError,
 )
 from .payments import X402Wallet
@@ -63,6 +64,7 @@ __all__ = [
     "HpsiMcpInsufficientCreditsError",
     "HpsiMcpRateLimitError",
     "HpsiMcpResponseError",
+    "HpsiMcpSettlementUnknownError",
     "HpsiMcpTimeoutError",
     "X402Wallet",
     "__version__",

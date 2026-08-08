@@ -326,3 +326,51 @@ class HpsiMcpInsufficientCreditsError(HpsiMcpAPIError):
 
 class HpsiMcpResponseError(HpsiMcpAPIError):
     """Raised when the API response cannot be decoded as expected."""
+
+
+class HpsiMcpSettlementUnknownError(HpsiMcpError):
+    """A payment was sent and the API cannot say whether it settled.
+
+    **Do not retry this call, and do not pay for it again.** The authorization
+    left this process; the facilitator may have moved the money before failing
+    to answer. A second attempt would sign a *new* authorization with a new
+    nonce, which is a second payment for one logical call.
+
+    Deliberately **not** a subclass of :class:`HpsiMcpAPIError`, unlike every
+    other error the API raises. ``except HpsiMcpAPIError: retry()`` is the most
+    ordinary line a caller writes, and for this one response it is the line that
+    costs money — so this error is placed where that handler cannot catch it. It
+    is meant to be loud. Crashing is cheaper than paying twice.
+
+    * ``call_id`` — the identifier of the unresolved call. **Keep it.** It is
+      what a reconciliation run needs to decide whether the money moved; the API
+      carries the same id in its own ledger.
+    * ``tool`` — which tool the unresolved call was for, when the API says.
+    * ``settlement_status`` — ``"unknown"``. Present so a caller can assert on
+      the field rather than on the type.
+
+    The client that raised this stops paying for the rest of its life
+    (``payment_spend_summary()["x402_disabled_reason"]`` says so, and
+    ``["unresolved_settlements"]`` lists the call ids). Credits-funded calls keep
+    working — nothing about the API key failed here. Once reconciliation says
+    what happened, ``client.set_wallet(wallet)`` reopens the x402 path.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        call_id: Optional[str] = None,
+        tool: Optional[str] = None,
+        settlement_status: Optional[str] = None,
+        status_code: Optional[int] = None,
+        response_text: Optional[str] = None,
+        body: Optional[dict] = None,
+    ) -> None:
+        super().__init__(redact_sensitive_text(message))
+        self.call_id = redact_sensitive_text(call_id) if call_id else None
+        self.tool = redact_sensitive_text(tool) if tool else None
+        self.settlement_status = settlement_status
+        self.status_code = status_code
+        self.response_text = sanitize_response_text(response_text)
+        self.body = sanitize_sensitive_data(body or {})
