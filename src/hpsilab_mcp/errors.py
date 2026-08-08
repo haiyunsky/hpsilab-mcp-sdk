@@ -206,7 +206,18 @@ class HpsiMcpPaymentError(HpsiMcpAPIError):
         # Keep the complete challenge available to payment-aware callers, but
         # never fold it into Exception.args / str(exc). Tracebacks, SDK logs,
         # and ordinary console output therefore contain only `message`.
-        super().__init__(message, status_code=status_code, response_text=response_text, body=body)
+        display_message = message
+        rejected = re.search(
+            r"\bPayment rejected:\s*([A-Za-z0-9_-]{1,80})", message, re.IGNORECASE
+        )
+        if rejected:
+            display_message = f"Payment rejected: {rejected.group(1)}."
+        super().__init__(
+            display_message,
+            status_code=status_code,
+            response_text=response_text,
+            body=body,
+        )
         self.accepts = sanitize_sensitive_data(accepts or [])
         self.tool = redact_sensitive_text(tool) if tool else None
         self.price = redact_sensitive_text(price) if price else None

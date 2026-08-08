@@ -15,6 +15,9 @@
 * Server-supplied long-form explanations no longer expand the exception text;
   recursively redacted details remain available through typed attributes and
   `body` for callers that need them.
+* Facilitator payment rejections are similarly compact in tracebacks, for
+  example `Payment rejected: invalid_payload.`; redacted diagnostics remain in
+  the exception's structured response context.
 
 ## v0.13.4 - 2026-08-08
 
