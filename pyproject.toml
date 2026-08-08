@@ -66,6 +66,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build]
 exclude = [
   "/.gitignore",
+  "/.agents",
   "/CHANGELOG.md",
   "/tests",
   "/docs",
@@ -73,3 +74,15 @@ exclude = [
   "/python",
   "/typescript",
 ]
+
+# `/.gitignore` above is honoured by the wheel and **cannot** be honoured by
+# the sdist: hatchling force-includes every VCS exclusion file into the sdist
+# so the archive can reproduce its own file selection
+# (hatchling/builders/sdist.py, `force_include[exclusion_file]`). No exclude,
+# and not even `only-include`, removes it — verified against hatchling 1.31.0.
+#
+# So the sdist ships a 257-byte list of cache directories, and the wheel — the
+# artifact `pip install` actually uses — ships the package and nothing else.
+# Recorded here because 0.12.2's changelog claimed the file was excluded, and
+# the next person to read that and see the file will otherwise go looking for
+# a config mistake that does not exist.

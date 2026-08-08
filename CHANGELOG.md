@@ -64,8 +64,10 @@
   parser failures with a fixed, unchained error.
 * Accept only public `https://hpsilab.com` registration links in warnings and
   remove query strings and fragments before display.
-* Exclude repository-only `.gitignore` and `CHANGELOG.md` files from release
-  artifacts.
+* Exclude repository-only `CHANGELOG.md` from release artifacts, and
+  `.gitignore` from the wheel. The sdist still carries `.gitignore`:
+  hatchling force-includes VCS exclusion files there and no build setting
+  overrides it. The wheel, which is what `pip install` uses, is clean.
 
 ## v0.12.1 - 2026-08-06
 
