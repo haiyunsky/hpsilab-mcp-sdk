@@ -25,6 +25,13 @@ from .errors import (
     safe_public_url,
 )
 from .payments import X402Wallet, wallet_from_env
+from .policy import (
+    CREDITS_ONLY,
+    X402_FALLBACK,
+    PaymentBudget,
+    PaymentPolicy,
+    decide as decide_payment,
+)
 from .tracking import build_tracking_headers
 
 
@@ -56,6 +63,33 @@ Configure:
     HPSILAB_X402_PRIVATE_KEY"""
 
 
+def _default_payment_mode(
+    *, wallet_was_passed: bool, wallet_from_environment: bool, has_api_key: bool
+) -> str:
+    """Whether an unstated `payment_mode` means "may pay".
+
+    The engineering spec requires an *explicit* opt-in before this SDK spends
+    money, and the whole question is what counts as explicit. Writing
+    `HpsiMcpClient(wallet=X402Wallet(...))` in source does: a wallet is not
+    something that appears in a constructor by accident.
+
+    `HPSILAB_X402_PRIVATE_KEY` in the environment does not. It is ambient, it
+    is frequently left over from another project, and a keyed client that finds
+    one should go on paying with Credits rather than quietly start paying with
+    crypto — which is what this SDK used to do.
+
+    The one exception is a client with *no* API key: there the environment
+    wallet is the only credential it has, so it is unambiguously the credential
+    it was meant to use. Refusing to pay in that case leaves a client that
+    cannot complete a single call.
+    """
+    if wallet_was_passed:
+        return X402_FALLBACK
+    if wallet_from_environment and not has_api_key:
+        return X402_FALLBACK
+    return CREDITS_ONLY
+
+
 class HpsiMcpClient:
     """Minimal REST API wrapper for the hosted H|ψ⟩ Quantum Finance APIs."""
 
@@ -67,9 +101,13 @@ class HpsiMcpClient:
         headers: Optional[Mapping[str, str]] = None,
         transport: Optional[httpx.BaseTransport] = None,
         wallet: Optional[X402Wallet] = None,
+        payment_mode: Optional[str] = None,
+        payment_policy: Optional[PaymentPolicy] = None,
     ) -> None:
         # Pay-per-call is opt-in: an explicit wallet, or HPSILAB_X402_PRIVATE_KEY
-        # in the environment.
+        # in the environment. Holding the wallet is not the same as consenting
+        # to spend it — `payment_policy` decides that, and defaults to
+        # `credits_only`. See `_default_payment_mode`.
         resolved_wallet = wallet if wallet is not None else wallet_from_env()
 
         # Anonymous free access was retired (API key is mandatory) — x402
@@ -95,6 +133,19 @@ class HpsiMcpClient:
 
         self._api_key = api_key
         self._wallet = resolved_wallet
+        self._payment_policy = self._initial_payment_policy(
+            payment_policy,
+            payment_mode,
+            wallet_was_passed=wallet is not None,
+            wallet_from_environment=wallet is None and resolved_wallet is not None,
+            has_api_key=bool(api_key),
+        )
+        self._budget = PaymentBudget()
+        # Separate from the authentication breaker below, and that separation is
+        # the point: a wallet that cannot sign says nothing about an API key
+        # that works. Tripping this one stops the client paying and leaves every
+        # Credits-funded call working.
+        self._x402_disabled_reason: Optional[str] = None
         self._auth_failed = False
         self._auth_failure_message: Optional[str] = None
         # Keep the check/request/response transition atomic. Without this,
@@ -131,12 +182,82 @@ class HpsiMcpClient:
             self._reset_auth_circuit()
 
     def set_wallet(self, wallet: Optional[X402Wallet]) -> None:
-        """Replace the x402 wallet and reset this client's authentication breaker."""
+        """Replace the x402 wallet and reset this client's breakers.
+
+        The payment policy is deliberately *not* changed. Swapping a wallet is
+        a repair — the old one was empty, or its key rotated — and repairing it
+        must not silently promote a `credits_only` client into one that spends.
+        """
         with self._request_lock:
             if wallet is None and not self._api_key:
                 raise HpsiMcpConfigError(_REMOVE_AUTH_MESSAGE)
             self._wallet = wallet
             self._reset_auth_circuit()
+            self._x402_disabled_reason = None
+
+    @staticmethod
+    def _initial_payment_policy(
+        payment_policy: Optional[PaymentPolicy],
+        payment_mode: Optional[str],
+        *,
+        wallet_was_passed: bool,
+        wallet_from_environment: bool,
+        has_api_key: bool,
+    ) -> PaymentPolicy:
+        """Reconcile the two ways a caller can state payment intent.
+
+        `payment_policy=` is the full surface; `payment_mode=` is the shorthand
+        for the one field most callers touch. Given both, the explicit mode
+        wins — it is the more specific statement, and a policy object is often
+        a shared default that a single call site wants to override.
+        """
+        policy = payment_policy or PaymentPolicy()
+        if payment_mode is not None:
+            return policy.with_mode(payment_mode)
+        if payment_policy is not None:
+            # The caller built a policy; its mode is a decision, not a default.
+            return policy
+        return policy.with_mode(
+            _default_payment_mode(
+                wallet_was_passed=wallet_was_passed,
+                wallet_from_environment=wallet_from_environment,
+                has_api_key=has_api_key,
+            )
+        )
+
+    @property
+    def payment_policy(self) -> PaymentPolicy:
+        """The spending rules in force. Frozen — use `set_payment_policy`."""
+        return self._payment_policy
+
+    def set_payment_policy(
+        self,
+        policy: Optional[PaymentPolicy] = None,
+        *,
+        mode: Optional[str] = None,
+    ) -> None:
+        """Replace the spending rules. Budgets already spent are not reset.
+
+        Deliberately: a caller that has spent $4 of a $5 session ceiling must
+        not be able to reach $9 by re-stating the same ceiling. Build a new
+        client for a genuinely new session.
+        """
+        with self._request_lock:
+            new_policy = policy if policy is not None else self._payment_policy
+            if mode is not None:
+                new_policy = new_policy.with_mode(mode)
+            self._payment_policy = new_policy
+
+    def payment_spend_summary(self) -> dict:
+        """What has been spent and what remains — for an agent to reason about.
+
+        A caller deciding whether to attempt an expensive call should be able to
+        ask, rather than discover the answer by being refused.
+        """
+        with self._request_lock:
+            summary = self._budget.summary(self._payment_policy)
+            summary["x402_disabled_reason"] = self._x402_disabled_reason
+            return summary
 
     def __enter__(self) -> "HpsiMcpClient":
         return self
@@ -346,38 +467,85 @@ class HpsiMcpClient:
             # Requiring a non-empty `accepts` covers both without enumerating
             # them, and is the same discriminator the backend, the MCP server
             # and the frontend apply (see `contracts/error_contract_fixtures.json`).
-            if (
-                response.status_code == 402
-                and self._wallet is not None
-                and self._has_settleable_offer(response)
-            ):
-                try:
-                    payment_headers = self._wallet.payment_headers(response)
-                except Exception:
-                    # Do not chain third-party wallet exceptions: a wallet
-                    # implementation may include signed payment context in
-                    # its exception text or attributes, which must not leak
-                    # into user tracebacks or logs.
-                    self._trip_auth_circuit(response)
-                if payment_headers:
-                    response = self._send(method, path, params, tool_name, extra=payment_headers)
-                    # Paid, and still refused. This is the one 402 that really
-                    # is a broken client rather than a priced call: the wallet
-                    # signed, the server took the header and answered 402
-                    # anyway, so repeating cannot help and another attempt
-                    # would just sign again. One payment per logical call, then
-                    # stop — otherwise a server stuck on 402 drains the wallet.
-                    #
-                    # Every *other* 402 leaves the client usable; see
-                    # `_raise_for_status`.
-                    if (
-                        response.status_code == 402
-                        and not self._is_insufficient_credits(response)
-                    ):
-                        self._trip_auth_circuit(response)
+            refusal: Optional[str] = None
+            if response.status_code == 402 and self._has_settleable_offer(response):
+                decision = decide_payment(
+                    self._response_body(response),
+                    tool_name=tool_name,
+                    policy=self._payment_policy,
+                    budget=self._budget,
+                    has_wallet=self._wallet is not None,
+                    x402_disabled_reason=self._x402_disabled_reason,
+                )
+                if not decision.pay:
+                    refusal = decision.reason
+                else:
+                    response = self._settle_once(
+                        method, path, params, tool_name, response, decision.offer
+                    )
 
-            self._raise_for_status(response)
+            self._raise_for_status(response, payment_refusal=refusal)
             return self._decode_json(response)
+
+    def _settle_once(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Mapping[str, str]],
+        tool_name: Optional[str],
+        challenge: httpx.Response,
+        offer,
+    ) -> httpx.Response:
+        """Sign one offer, charge the budget, retry once. Never twice.
+
+        The budget is charged once the authorization is signed and about to be
+        sent, and is not credited back if the retry then fails. The two edges
+        are deliberate: before signing nothing can have moved, so charging
+        would be wrong; after the request leaves we no longer know whether it
+        settled, and the spec's "uncertain prior payment: resolve state before
+        another payment attempt" has exactly one safe local resolution — assume
+        it moved.
+        """
+        try:
+            payment_headers = self._wallet.payment_headers(challenge)
+        except Exception:
+            # Do not chain third-party wallet exceptions: a wallet
+            # implementation may include signed payment context in its
+            # exception text or attributes, which must not leak into user
+            # tracebacks or logs.
+            self._disable_x402("the configured wallet could not sign the payment challenge")
+            return challenge
+        if not payment_headers:
+            self._disable_x402("the configured wallet produced no payment headers")
+            return challenge
+
+        self._budget.charge(offer.amount)
+        try:
+            response = self._send(method, path, params, tool_name, extra=payment_headers)
+        except (HpsiMcpTimeoutError, HpsiMcpConnectionError):
+            # The authorization went out and no answer came back. Whether it
+            # settled is unknowable from here, so stop paying rather than let
+            # a retry sign a second one for the same logical call.
+            self._disable_x402(
+                "a payment was sent but its outcome is unknown (the request did not complete)"
+            )
+            raise
+
+        # Paid, and still refused. Repeating cannot help and another attempt
+        # would just sign again, so close the x402 path — otherwise a server
+        # stuck on 402 drains the wallet one call at a time. Credits-funded
+        # calls are untouched; the API key is not what failed here.
+        if response.status_code == 402 and not self._is_insufficient_credits(response):
+            self._disable_x402("a payment was accepted by the wallet but the server still refused")
+        return response
+
+    def _disable_x402(self, reason: str) -> None:
+        """Close the x402 path for this client, leaving the rest of it working.
+
+        Never carries wallet-supplied text: the reasons are this module's own
+        fixed strings, so a signature or key cannot reach a log through here.
+        """
+        self._x402_disabled_reason = reason
 
     def _reset_auth_circuit(self) -> None:
         self._auth_failed = False
@@ -447,7 +615,9 @@ Fix:
             raise HpsiMcpConnectionError("Request failed before a response was received.")
         return response
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    def _raise_for_status(
+        self, response: httpx.Response, payment_refusal: Optional[str] = None
+    ) -> None:
         if response.status_code < 400:
             return
 
@@ -490,7 +660,7 @@ Fix:
         # reconfiguration — the same reasoning that already moved the Credits
         # refusal ahead of the breaker.
         if response.status_code == 402:
-            error = self._payment_error(message, response)
+            error = self._payment_error(message, response, payment_refusal)
             if self._api_key is None:
                 self._warn_anon_payment_required(error.price, response)
             raise error
@@ -539,7 +709,12 @@ Fix:
             response_text=response.text,
         )
 
-    def _payment_error(self, message: str, response: httpx.Response) -> HpsiMcpPaymentError:
+    def _payment_error(
+        self,
+        message: str,
+        response: httpx.Response,
+        payment_refusal: Optional[str] = None,
+    ) -> HpsiMcpPaymentError:
         """Attach the x402 challenge to the raised error.
 
         The body of a 402 is the challenge document, so pull `accepts` (and the
@@ -561,7 +736,16 @@ Fix:
         except ValueError:
             pass
 
-        if self._wallet is None:
+        if self._wallet is not None and payment_refusal:
+            # A wallet is present, an offer arrived, and this client declined
+            # it. Saying why is the only thing that separates "the server
+            # offered nothing payable" from "your own policy said no" — two
+            # failures with different fixes, and only one of them is the
+            # server's doing. Checked after `self._wallet`, because a caller
+            # with no wallet is better served by the hint below than by being
+            # told their policy is `credits_only`.
+            message = f"{message} No payment was attempted: {payment_refusal}."
+        elif self._wallet is None:
             # Reaching a 402 with no wallet configured means this client has a
             # real api_key (construction requires one or the other — see
             # HpsiMcpClient.__init__): an already-registered account whose

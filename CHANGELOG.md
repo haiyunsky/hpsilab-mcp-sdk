@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.13.0 - 2026-08-08
+
+### Breaking
+
+* A wallet found in `HPSILAB_X402_PRIVATE_KEY` no longer authorises payment on
+  a client that also has an `api_key`. Holding a key is not consent to spend
+  it, and an environment variable is ambient — frequently left over from
+  another project. Such a client now stays on Credits and raises
+  `HpsiMcpPaymentError` on a payment challenge. Pass
+  `payment_mode="x402_fallback"` to restore the previous behaviour. A wallet
+  passed to the constructor, and an environment wallet on a client with no
+  `api_key`, both still authorise payment.
+* A `402` returned *after* a payment was made now closes only the x402 path
+  rather than the whole client's authentication circuit, and raises
+  `HpsiMcpPaymentError` instead of `HpsiMcpConfigError`. A server that will
+  not accept a valid payment is not a bad credential; Credits-funded calls on
+  the same client keep working. The wallet-drain guard is unchanged — one
+  signature per logical call, then the x402 path shuts.
+* A wallet that cannot sign a challenge likewise closes the x402 path and
+  raises `HpsiMcpPaymentError`, where it previously raised
+  `HpsiMcpConfigError`.
+
+### Added
+
+* `PaymentPolicy` — the spending rules, separate from the wallet that carries
+  them out: `mode` (`credits_only` by default), `max_payment_per_call`,
+  `max_payment_per_session`, `max_payment_per_day`, `allowed_payment_assets`,
+  `allowed_networks`, `x402_allowed_tools`. Passed as `payment_policy=`, or
+  `payment_mode=` for the shorthand. Ceilings are `Decimal` and validated at
+  construction.
+* `client.payment_spend_summary()` — what has been spent this session and
+  today, against which ceilings, plus why the x402 path is closed if it is.
+* `client.set_payment_policy()` — replaces the rules without refunding spend
+  already recorded.
+
+### Changed
+
+* An offer in an asset whose decimals this SDK does not know is refused rather
+  than signed. An amount is an integer in the asset's base units, so reading
+  150000 units of an 18-decimal token as USDC turns $0.15 into $150,000.
+* A paid retry that times out or loses its connection is counted as spent and
+  closes the x402 path. Whether the authorization settled is unknowable from
+  the client, and a second signature for the same logical call is the one
+  outcome that must not follow.
+* `HpsiMcpPaymentError` now explains a policy refusal in its message, so
+  "the server offered nothing payable" and "your own policy said no" are
+  distinguishable.
+* `client.set_wallet()` reopens the x402 path but no longer changes the
+  payment mode — repairing a wallet must not promote a `credits_only` client
+  into one that spends.
+
 ## v0.12.2 - 2026-08-06
 
 ### Security

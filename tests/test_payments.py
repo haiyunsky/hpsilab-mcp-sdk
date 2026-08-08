@@ -90,8 +90,12 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=_StubWallet())
 
-        with self.assertRaises(HpsiMcpConfigError):
-            client.get_monte_carlo("NVDA")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpPaymentError):
+                client.get_monte_carlo("NVDA")
+
+        self.assertTrue([w for w in caught if "hpsilab.com/register" in str(w.message)])
         client.close()
 
     def test_402_warning_reads_flat_register_field_when_no_upgrade_dict(self) -> None:
@@ -105,8 +109,12 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=_StubWallet())
 
-        with self.assertRaises(HpsiMcpConfigError):
-            client.get_monte_carlo("NVDA")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(HpsiMcpPaymentError):
+                client.get_monte_carlo("NVDA")
+
+        self.assertTrue([w for w in caught if "hpsilab.com/register" in str(w.message)])
         client.close()
 
     def test_402_stays_quiet_for_a_caller_with_its_own_key(self) -> None:
@@ -160,16 +168,24 @@ class PaymentFlowTests(unittest.TestCase):
     def test_a_second_402_is_raised_rather_than_paid_again(self) -> None:
         # One retry, not a loop — a server that keeps answering 402 must not
         # be able to drain the wallet.
+        #
+        # What the drain guard *closes* changed with the payment policy: it used
+        # to trip the authentication breaker, which bricked the whole client.
+        # A server that will not accept a valid payment is not a bad credential,
+        # so only the x402 path shuts; see
+        # `test_a_stuck_server_closes_x402_without_bricking_the_client`.
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(402, json=CHALLENGE)
 
         wallet = _StubWallet()
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=wallet)
 
-        with self.assertRaises(HpsiMcpConfigError):
+        with self.assertRaises(HpsiMcpPaymentError):
             client.get_monte_carlo("NVDA")
 
         self.assertEqual(wallet.calls, 1)
+        self.assertIsNotNone(client._x402_disabled_reason)
+        self.assertFalse(client._auth_failed)
         client.close()
 
     def test_a_priced_call_does_not_disable_the_rest_of_the_client(self) -> None:
@@ -200,10 +216,11 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertFalse(client._auth_failed)
         client.close()
 
-    def test_a_refused_challenge_propagates_untouched(self) -> None:
+    def test_a_wallet_that_cannot_sign_never_leaks_its_own_error(self) -> None:
         # e.g. the price is over max_price_usdc, or the network has no scheme.
-        # The wallet's own error is the useful one; don't bury it under a
-        # generic payment error.
+        # A wallet implementation may put signed payment context in its
+        # exception text or attributes, so neither the message nor the cause
+        # may survive into the traceback the caller sees.
         wallet = _StubWallet(error=ValueError("amount exceeds max_amount policy"))
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -211,10 +228,13 @@ class PaymentFlowTests(unittest.TestCase):
 
         client = HpsiMcpClient(transport=httpx.MockTransport(handler), wallet=wallet)
 
-        with self.assertRaises(HpsiMcpConfigError) as caught:
+        with self.assertRaises(HpsiMcpPaymentError) as caught:
             client.get_monte_carlo("NVDA")
         self.assertIsNone(caught.exception.__cause__)
         self.assertNotIn("max_amount policy", str(caught.exception))
+        # Spec safety requirement: an invalid signer closes the x402 path at
+        # once, rather than being re-asked on every later 402.
+        self.assertIsNotNone(client._x402_disabled_reason)
         client.close()
 
     def test_pro_tool_402_is_also_payable(self) -> None:

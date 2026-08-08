@@ -51,7 +51,19 @@ _ANON_REFUSAL = {
 _CHALLENGE = {
     "x402Version": 2,
     "error": "Payment required",
-    "accepts": [{"scheme": "exact", "network": "eip155:8453", "maxAmountRequired": "100000"}],
+    # `asset` is not decoration. The amount is an integer in that asset's base
+    # units, so without it the offer cannot be valued and therefore cannot be
+    # checked against a spending ceiling — `policy.parse_offers` drops any
+    # offer it cannot price. Production challenges always carry it (the x402
+    # `exact` EVM scheme requires it; see contracts/error_contract_fixtures.json).
+    "accepts": [
+        {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "maxAmountRequired": "100000",
+        }
+    ],
     "tool": "get_monte_carlo",
     "price": "$0.10",
 }

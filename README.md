@@ -216,17 +216,20 @@ running process. Every 402 challenge also names a card checkout URL
 instead, if neither a wallet nor unattended registration fits.
 
 Without a wallet the SDK does not retry a `402`. It raises
-`HpsiMcpConfigError` and opens the Client's authentication circuit:
+`HpsiMcpPaymentError`, carrying the challenge so you can settle it with your
+own x402 client if you'd rather:
 
 ```python
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError
+from hpsilab_mcp import HpsiMcpPaymentError
 
 try:
     client.get_monte_carlo("NVDA")
-except HpsiMcpConfigError as exc:
-    print(exc)
-    # Configure a wallet, replace the API key, or create a new Client.
+except HpsiMcpPaymentError as exc:
+    print(exc.price, exc.accepts)
 ```
+
+The rest of the client keeps working — one tool being priced says nothing
+about the next one.
 
 With a wallet, the client signs the challenge and repeats the request for you:
 
@@ -237,18 +240,61 @@ client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
 client.get_monte_carlo("NVDA")   # no account needed — paid per call
 ```
 
-`X402Wallet()` reads `HPSILAB_X402_PRIVATE_KEY` when no key is passed, and a
-client with no `wallet=` picks that variable up automatically (an `api_key=`
-still satisfies construction on its own either way — a wallet is only
-required when there's no `api_key`). Three things hold regardless of how it
-is configured:
+### Holding a wallet is not the same as agreeing to spend it
 
-* Nothing is paid pre-emptively — the call is always attempted first, and
-  only pays if the response comes back 402.
-* Each call is retried **once** after paying; a server that keeps answering
-  402 cannot drain the wallet and opens the authentication circuit.
-* `max_price_usdc` (default `$1.00`) caps a single call. A challenge asking for
-  more is refused, not signed.
+Payment is governed by a `PaymentPolicy`, separately from whether a wallet
+exists. The default mode is **`credits_only`**: the SDK never pays.
+
+```python
+from hpsilab_mcp import HpsiMcpClient, PaymentPolicy, X402Wallet
+
+client = HpsiMcpClient(
+    api_key=API_KEY,
+    wallet=X402Wallet(PRIVATE_KEY),
+    payment_policy=PaymentPolicy(
+        mode="x402_fallback",          # the opt-in; default "credits_only"
+        max_payment_per_call="0.20",
+        max_payment_per_session="2.00",
+        max_payment_per_day="10.00",
+        allowed_payment_assets={"USDC"},
+        allowed_networks={"base"},
+        x402_allowed_tools={"get_monte_carlo", "get_pretrade_risk_scan"},
+    ),
+)
+
+client.payment_spend_summary()   # what's been spent, and against which ceilings
+```
+
+`payment_mode="x402_fallback"` is shorthand when the default ceilings suit you.
+
+When `payment_mode` is not given, it is derived:
+
+| Wallet came from | `api_key` | Mode |
+| --- | --- | --- |
+| `wallet=` in the constructor | either | `x402_fallback` |
+| `HPSILAB_X402_PRIVATE_KEY` | absent | `x402_fallback` |
+| `HPSILAB_X402_PRIVATE_KEY` | present | `credits_only` |
+
+The last row is the one that changed in 0.13: a private key left in the
+environment by another project is not consent to spend it, and a keyed client
+that finds one goes on paying with Credits. Pass `payment_mode` explicitly if
+you want the old behaviour.
+
+Regardless of configuration:
+
+* Nothing is paid pre-emptively — the call is always attempted first, and only
+  pays if the response comes back 402 **carrying an offer**. An ordinary "out
+  of Credits" 402 has no `accepts` and is never payable in either mode.
+* Each call signs **once**. A server that answers 402 even after payment
+  closes the x402 path for that client, so it cannot drain the wallet one call
+  at a time; Credits-funded calls keep working.
+* An offer in an asset the SDK cannot price is refused rather than signed. The
+  amount is an integer in that asset's base units, so misreading the decimals
+  is not a rounding error.
+* A payment whose outcome is unknown — the retry timed out or the connection
+  dropped — is counted as spent and closes the x402 path, rather than being
+  re-attempted.
+* Budgets are not refunded, and replacing the policy does not reset them.
 
 Signing happens locally; the private key never leaves your process.
 
