@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.13.1 - 2026-08-08
+
+Documentation only. No code changed since 0.13.0 — `src/` is byte-identical,
+so upgrading is safe and changes nothing at runtime.
+
+### Fixed (documentation)
+
+* **The pricing table implied every priced tool could be bought with a wallet.
+  Three of them cannot.** Pay-per-call is an allowlist on the server side, and
+  `analyze_stock` (a composite whose partial fan-out failure has no refund
+  path) and `generate_stock_research_report` (creates a hosted artifact an
+  on-chain settlement cannot un-create) are off it. They still show a price,
+  because that is what they cost in Credits — a wallet simply cannot spend it.
+  The table now has a "Payable with a wallet" column.
+
+  Nothing in the SDK needed changing for this: a tool that cannot be bought
+  never produces a settleable offer, so `PaymentPolicy` never authorises a
+  payment and `HpsiMcpPaymentError` already reports that no offer arrived.
+* `get_equity_curve` is now payable, at **$0.07** rather than $0.05. It was
+  held off the allowlist because $0.05 for 6 Credits worked out below the
+  Developer plan's per-Credit rate — the one tool where paying per call beat
+  subscribing.
+* Corrected the 0.12.2 entry, which claimed `.gitignore` was excluded from
+  release artifacts. It is excluded from the wheel and **cannot** be excluded
+  from the sdist: hatchling force-includes VCS exclusion files there and no
+  build setting overrides it. The wheel — what `pip install` uses — is clean.
+
 ## v0.13.0 - 2026-08-08
 
 ### Breaking
