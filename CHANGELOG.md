@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.13.2 - 2026-08-08
+
+Documentation only, and it exists because 0.13.1 shipped one correction short.
+
+### Fixed (documentation)
+
+* **The `PaymentPolicy` example showed `api_key=` and `wallet=` on the same
+  client, which reads as "pay per call when the Credits run out". It does not
+  do that — in that configuration the wallet is never reached at all.**
+
+  The reason is server-side. The API does not offer x402 to a caller it can
+  identify: a signed-in request over its plan gets `402 insufficient_credits`,
+  a 402 with no `accepts`, so `PaymentPolicy` has nothing to authorise and
+  `HpsiMcpInsufficientCreditsError` is raised. Buying Credits and paying per
+  call are separate doors, and a key means you are already through the first.
+
+  The example is keyless now, the rule is stated beside it, and two tests hold
+  it — one contrasting the same policy and wallet with and without a key, and
+  one that fails if the API ever *does* start offering payment to keyed
+  callers, so this section gets rewritten at that moment rather than quietly
+  going stale.
+
+  This correction was written before 0.13.1 was published but after its
+  artifacts were built, and nothing compared the two. `tests/test_release.py`
+  now does: it fails if a built distribution in `dist/` carries a README older
+  than the repository's.
+
 ## v0.13.1 - 2026-08-08
 
 Documentation only. No code changed since 0.13.0 — `src/` is byte-identical,
