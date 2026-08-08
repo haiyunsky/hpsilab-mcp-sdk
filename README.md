@@ -315,9 +315,9 @@ without an offer, and the way through is an API key or OAuth — not a wallet.
 | --- | ---: | --- |
 | `get_pretrade_risk_scan` | $0.15 | yes |
 | `get_monte_carlo` | $0.10 | yes |
+| `get_equity_curve` | $0.07 | yes |
 | `get_iv_radar`, `get_option_pressure`, `get_ai_prediction` | $0.05 | yes |
 | `analyze_stock` | $0.15 | no |
-| `get_equity_curve` | $0.05 | no |
 | `generate_stock_research_report` | $0.35 | no |
 
 Nothing in the SDK needs configuring for this — a tool that cannot be bought
