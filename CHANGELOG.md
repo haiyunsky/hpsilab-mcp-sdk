@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.13.3 - 2026-08-08
+
+Two payment defects, both found by auditing the flow before the first real
+settlement rather than after it. Both could cost money; neither raised
+anything.
+
+### Fixed
+
+* **The client paid the dearest acceptable offer, not the cheapest.** With a
+  challenge listing $0.90 and $0.05 — both under a $1.00
+  `max_payment_per_call` — it paid $0.90. Every offer under the ceiling passes
+  every check equally, so taking the first one handed whoever writes the
+  challenge a lever: order `accepts` dearest-first and the caller spends the
+  most their policy allows, with the cap doing its job the whole time. Offers
+  are now sorted by amount, so ordering cannot change what is paid.
+
+  This costs you nothing: a ceiling is permission to spend *at most* that
+  much, never an instruction to spend it.
+
+* **The policy and the wallet chose an offer independently and nothing
+  compared them.** `PaymentPolicy` picks one from `accepts`; `X402Wallet`
+  hands the whole response to the x402 client, which picks again; the
+  signature commits to the wallet's choice. A multi-offer challenge could be
+  approved at one price and signed at another — with the budget charged for
+  the approved one, which is the quiet version of that failure.
+
+  `X402Wallet.sign()` now returns the signed payload alongside the headers,
+  and the client compares `PaymentPayload.accepted` against the approved offer
+  on amount, asset and network before the retry is sent. A mismatch closes the
+  x402 path and charges nothing.
+
+### Added
+
+* `X402Wallet.sign(response)` → `(headers, agreed)`. `payment_headers()` is
+  unchanged and still works; a custom wallet without `sign()` still pays, but
+  its choice cannot be checked, which the client treats as *unverifiable*
+  rather than as fine.
+
 ## v0.13.2 - 2026-08-08
 
 Documentation only, and it exists because 0.13.1 shipped one correction short.

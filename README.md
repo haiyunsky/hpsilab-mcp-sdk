@@ -306,6 +306,16 @@ Regardless of configuration:
 * An offer in an asset the SDK cannot price is refused rather than signed. The
   amount is an integer in that asset's base units, so misreading the decimals
   is not a rounding error.
+* When a challenge lists several offers, **the cheapest acceptable one is
+  taken**, not the first. A ceiling bounds the worst price and says nothing
+  about the gap to the best one, so choosing by list order would let whoever
+  writes the challenge decide how much of your allowance to consume simply by
+  ordering it.
+* **What the wallet signs is checked against what the policy approved** —
+  amount, asset and network — before the payment leaves the process. The
+  policy picks an offer and the wallet picks one independently; a multi-offer
+  challenge could otherwise be approved at one price and signed at another. A
+  mismatch closes the x402 path and charges nothing.
 * A payment whose outcome is unknown — the retry timed out or the connection
   dropped — is counted as spent and closes the x402 path, rather than being
   re-attempted.
