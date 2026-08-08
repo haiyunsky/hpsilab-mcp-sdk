@@ -308,12 +308,21 @@ client.set_wallet(X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
 
 See [Upgrading](docs/upgrading.md) for the exception-contract migration.
 
-| Tool | Price per call |
-| --- | ---: |
-| `analyze_stock`, `get_pretrade_risk_scan` | $0.15 |
-| `get_monte_carlo` | $0.10 |
-| `get_iv_radar`, `get_option_pressure`, `get_ai_prediction`, `get_equity_curve` | $0.05 |
-| `generate_stock_research_report` | $0.35 |
+Pay-per-call is an allowlist. A tool that is not on it answers `401`/`402`
+without an offer, and the way through is an API key or OAuth — not a wallet.
+
+| Tool | Price per call | Payable with a wallet |
+| --- | ---: | --- |
+| `get_pretrade_risk_scan` | $0.15 | yes |
+| `get_monte_carlo` | $0.10 | yes |
+| `get_iv_radar`, `get_option_pressure`, `get_ai_prediction` | $0.05 | yes |
+| `analyze_stock` | $0.15 | no |
+| `get_equity_curve` | $0.05 | no |
+| `generate_stock_research_report` | $0.35 | no |
+
+Nothing in the SDK needs configuring for this — a tool that cannot be bought
+simply never produces a settleable offer, so `PaymentPolicy` never authorises a
+payment for it and `HpsiMcpPaymentError` explains that no offer arrived.
 
 ## Version
 
