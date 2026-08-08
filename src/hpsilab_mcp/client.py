@@ -177,6 +177,15 @@ class HpsiMcpClient:
             wallet_from_environment=wallet is None and resolved_wallet is not None,
             has_api_key=bool(api_key),
         )
+        # A wallet-only SDK caller is not an anonymous web visitor. Without an
+        # explicit transport signal the REST middleware sees "no Authorization"
+        # and may grant browser trial access, so the wallet is never challenged.
+        # This header grants no access; it only selects per-call x402. Keyed
+        # clients omit it so their normal route remains Credits first.
+        if not api_key and resolved_wallet is not None:
+            request_headers["X-HPSILAB-Payment-Mode"] = (
+                "x402" if self._payment_policy.pays else "credits_only"
+            )
         self._budget = PaymentBudget()
         # Separate from the authentication breaker below, and that separation is
         # the point: a wallet that cannot sign says nothing about an API key
@@ -219,8 +228,13 @@ class HpsiMcpClient:
             self._api_key = api_key
             if api_key:
                 self._client.headers["Authorization"] = f"Bearer {api_key}"
+                self._client.headers.pop("X-HPSILAB-Payment-Mode", None)
             else:
                 self._client.headers.pop("Authorization", None)
+                if self._wallet is not None:
+                    self._client.headers["X-HPSILAB-Payment-Mode"] = (
+                        "x402" if self._payment_policy.pays else "credits_only"
+                    )
             self._reset_auth_circuit()
 
     def set_wallet(self, wallet: Optional[X402Wallet]) -> None:
@@ -239,6 +253,13 @@ class HpsiMcpClient:
             if wallet is None and not self._api_key:
                 raise HpsiMcpConfigError(_REMOVE_AUTH_MESSAGE)
             self._wallet = wallet
+            if not self._api_key:
+                if wallet is None:
+                    self._client.headers.pop("X-HPSILAB-Payment-Mode", None)
+                else:
+                    self._client.headers["X-HPSILAB-Payment-Mode"] = (
+                        "x402" if self._payment_policy.pays else "credits_only"
+                    )
             self._reset_auth_circuit()
             self._x402_disabled_reason = None
 
@@ -294,6 +315,10 @@ class HpsiMcpClient:
             if mode is not None:
                 new_policy = new_policy.with_mode(mode)
             self._payment_policy = new_policy
+            if not self._api_key and self._wallet is not None:
+                self._client.headers["X-HPSILAB-Payment-Mode"] = (
+                    "x402" if new_policy.pays else "credits_only"
+                )
 
     def payment_spend_summary(self) -> dict:
         """What has been spent and what remains — for an agent to reason about.

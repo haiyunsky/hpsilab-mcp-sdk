@@ -135,6 +135,20 @@ def test_passing_a_wallet_in_code_is_consent():
     c.close()
 
 
+def test_wallet_only_client_explicitly_selects_x402_transport():
+    c = client_for(httpx.Response(200, json={}), wallet=Wallet())
+
+    assert c._client.headers["X-HPSILAB-Payment-Mode"] == "x402"
+    c.close()
+
+
+def test_keyed_wallet_client_does_not_bypass_credits():
+    c = client_for(httpx.Response(200, json={}), wallet=Wallet(), api_key=KEY)
+
+    assert "X-HPSILAB-Payment-Mode" not in c._client.headers
+    c.close()
+
+
 def test_an_explicit_mode_overrides_the_wallet_it_was_given():
     c = client_for(httpx.Response(200, json={}), wallet=Wallet(), api_key=KEY, payment_mode=CREDITS_ONLY)
 
