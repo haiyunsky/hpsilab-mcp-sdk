@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from decimal import Decimal, InvalidOperation
 from threading import RLock
 from types import TracebackType
 from typing import Any, Mapping, Optional, Sequence, Type
@@ -27,6 +28,8 @@ from .errors import (
 from .payments import X402Wallet, wallet_from_env
 from .policy import (
     CREDITS_ONLY,
+    normalize_network,
+    resolve_asset,
     X402_FALLBACK,
     PaymentBudget,
     PaymentPolicy,
@@ -89,6 +92,38 @@ def _default_payment_mode(
         return X402_FALLBACK
     return CREDITS_ONLY
 
+
+
+def _offer_mismatch(approved, agreed: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """Why the signed payment disagrees with the approved offer, or None.
+
+    `agreed is None` means the wallet could not say what it signed. That is not
+    a mismatch and is deliberately not treated as one — refusing every wallet
+    that predates `sign()` would break paying clients to close a gap none of
+    them have been shown to have. It is also not silently fine: the caller
+    simply has no check available, which the comment at the call site says.
+
+    Compared on amount, asset and network rather than by identity, because the
+    two objects come from different parsers of the same JSON and will not be
+    the same dict.
+    """
+    if agreed is None:
+        return None
+    raw_amount = agreed.get("maxAmountRequired", agreed.get("amount"))
+    try:
+        signed_units = Decimal(str(raw_amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return "the signed payment carries no readable amount"
+    # `approved.amount` is in whole USDC; the wire value is base units.
+    if signed_units != approved.amount * (Decimal(10) ** 6):
+        return f"signed {signed_units} base units, approved {approved.amount} USDC"
+    signed_network = normalize_network(agreed.get("network"))
+    if signed_network != approved.network:
+        return f"signed on {signed_network}, approved {approved.network}"
+    signed_asset = resolve_asset(agreed.get("asset"))
+    if not signed_asset or signed_asset[0] != approved.asset_symbol:
+        return f"signed a different asset than the approved {approved.asset_symbol}"
+    return None
 
 class HpsiMcpClient:
     """Minimal REST API wrapper for the hosted H|ψ⟩ Quantum Finance APIs."""
@@ -507,7 +542,14 @@ class HpsiMcpClient:
         it moved.
         """
         try:
-            payment_headers = self._wallet.payment_headers(challenge)
+            signer = getattr(self._wallet, "sign", None)
+            if signer is not None:
+                payment_headers, agreed = signer(challenge)
+            else:
+                # A wallet predating `sign()`. It can still pay; what it cannot
+                # do is tell us what it agreed to, so the check below is skipped
+                # rather than silently passed.
+                payment_headers, agreed = self._wallet.payment_headers(challenge), None
         except Exception:
             # Do not chain third-party wallet exceptions: a wallet
             # implementation may include signed payment context in its
@@ -517,6 +559,19 @@ class HpsiMcpClient:
             return challenge
         if not payment_headers:
             self._disable_x402("the configured wallet produced no payment headers")
+            return challenge
+
+        # The policy chose one offer from `accepts`; the wallet chose one from
+        # the same list, independently, and the signature commits to the
+        # wallet's. Nothing made those the same choice. A challenge listing
+        # several offers could be approved at one price and signed at another —
+        # and the budget would then be charged for the wrong one, which is the
+        # quiet version of the failure rather than the loud one.
+        mismatch = _offer_mismatch(offer, agreed)
+        if mismatch:
+            self._disable_x402(
+                "the wallet signed a different offer than the policy approved"
+            )
             return challenge
 
         self._budget.charge(offer.amount)

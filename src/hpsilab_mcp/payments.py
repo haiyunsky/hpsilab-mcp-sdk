@@ -106,10 +106,33 @@ class X402Wallet:
         asks for more than ``max_price_usdc``, or names a network/asset this
         wallet has no scheme for — never returns unsigned/partial headers.
         """
-        headers, _payload = self._http.handle_402_response(
+        return self.sign(response)[0]
+
+    def sign(self, response: Any) -> tuple[dict, Optional[dict]]:
+        """The headers, **and what was actually agreed to**.
+
+        `handle_402_response` returns both, and dropping the second half is how
+        the client came to have two independent choices of offer that nobody
+        compared: `PaymentPolicy` picks one from `accepts`, this wallet picks
+        one from the same list, and the signature commits to the wallet's. A
+        challenge listing several offers could therefore be approved at one
+        price and signed at another.
+
+        `PaymentPayload.accepted` is the requirements the signature actually
+        covers, so returning it lets the caller check the two agree before the
+        payment leaves the process. Returns None for it only when the payment
+        stack gives us nothing to check — which the caller must treat as
+        "unverifiable", not as "fine".
+        """
+        headers, payload = self._http.handle_402_response(
             dict(response.headers), response.content
         )
-        return dict(headers or {})
+        agreed = None
+        accepted = getattr(payload, "accepted", None)
+        if accepted is not None:
+            dump = getattr(accepted, "model_dump", None)
+            agreed = dump(by_alias=True) if dump else None
+        return dict(headers or {}), agreed
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         cap = "uncapped" if self.max_price_usdc is None else f"max ${self.max_price_usdc:g}/call"

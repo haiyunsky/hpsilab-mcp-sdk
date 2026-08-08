@@ -412,7 +412,14 @@ def decide(
         refusals.append(
             f"{unusable} offer(s) named an asset or network this client cannot value"
         )
-    for offer in offers:
+    # **Cheapest first, not list order.** A ceiling bounds the worst case and
+    # says nothing about the gap between the worst acceptable price and the
+    # best one. Taking the first offer that fits hands whoever writes the
+    # challenge a lever: every offer under the cap is equally acceptable, so
+    # the dearest one wins simply by being listed first. Sorting removes the
+    # lever, and costs the caller nothing — they asked to spend *at most* the
+    # ceiling, never to spend it.
+    for offer in sorted(offers, key=lambda candidate: candidate.amount):
         if offer.network not in policy.allowed_networks:
             refusals.append(f"network {offer.network} is not allowed")
             continue

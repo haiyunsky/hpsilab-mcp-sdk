@@ -617,3 +617,144 @@ def test_the_same_client_without_a_key_does_pay():
     assert c.get_monte_carlo("NVDA") == {"ok": True}
     assert wallet.calls == 1
     c.close()
+
+
+# ---------------------------------------------------------------------------
+# The ceiling bounds the worst price; it does not choose the best one
+# ---------------------------------------------------------------------------
+
+
+def test_the_cheapest_acceptable_offer_is_taken_not_the_first():
+    """A challenge may list several offers, and every one under the ceiling is
+    equally acceptable — so taking the first hands whoever writes the challenge
+    a lever: order `accepts` dearest-first and the caller pays the most their
+    policy allows. The ceiling was doing its job and still costing 18x."""
+    body = challenge()
+    body["accepts"] = [
+        {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE,
+         "maxAmountRequired": "900000", "payTo": "0x" + "1" * 40},   # $0.90
+        {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE,
+         "maxAmountRequired": "50000", "payTo": "0x" + "1" * 40},    # $0.05
+        {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE,
+         "maxAmountRequired": "150000", "payTo": "0x" + "1" * 40},   # $0.15
+    ]
+
+    decision = decide(
+        body,
+        tool_name="get_monte_carlo",
+        policy=PaymentPolicy(mode=X402_FALLBACK, max_payment_per_call="1.00"),
+        budget=PaymentBudget(),
+        has_wallet=True,
+    )
+
+    assert decision.pay
+    assert decision.offer.amount == Decimal("0.05")
+
+
+def test_ordering_cannot_change_what_is_paid():
+    """The same offers in any order must cost the same."""
+    entries = [
+        {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE,
+         "maxAmountRequired": amount, "payTo": "0x" + "1" * 40}
+        for amount in ("300000", "70000", "500000")
+    ]
+    chosen = set()
+    for order in ([0, 1, 2], [2, 1, 0], [1, 0, 2]):
+        body = challenge()
+        body["accepts"] = [entries[i] for i in order]
+        decision = decide(
+            body, tool_name="get_monte_carlo",
+            policy=PaymentPolicy(mode=X402_FALLBACK, max_payment_per_call="1.00"),
+            budget=PaymentBudget(), has_wallet=True,
+        )
+        chosen.add(decision.offer.amount)
+
+    assert chosen == {Decimal("0.07")}
+
+
+# ---------------------------------------------------------------------------
+# The wallet must sign the offer the policy approved
+# ---------------------------------------------------------------------------
+
+
+class SigningWallet:
+    """A wallet that reports what it signed — and can be told to sign something
+    other than what the policy picked."""
+
+    def __init__(self, agreed=None):
+        self.calls = 0
+        self._agreed = agreed
+
+    def sign(self, response):
+        self.calls += 1
+        body = response.json()
+        agreed = self._agreed if self._agreed is not None else body["accepts"][0]
+        return {"X-PAYMENT": "signed"}, agreed
+
+
+def test_a_wallet_signing_a_different_offer_is_refused(monkeypatch):
+    """`PaymentPolicy` picks one offer from `accepts` and the wallet picks one
+    independently; the signature commits to the wallet's. Nothing made those
+    the same choice, so they are compared before the payment leaves."""
+    dearer = {"scheme": "exact", "network": "eip155:8453", "asset": USDC_BASE,
+              "maxAmountRequired": "900000", "payTo": "0x" + "1" * 40}
+    wallet = SigningWallet(agreed=dearer)
+    sent = []
+
+    def handler(request):
+        sent.append(request.headers.get("X-PAYMENT"))
+        return httpx.Response(402, json=challenge())
+
+    c = HpsiMcpClient(
+        transport=httpx.MockTransport(handler), wallet=wallet, api_key=KEY,
+        payment_mode=X402_FALLBACK,
+    )
+
+    with pytest.raises(HpsiMcpPaymentError):
+        c.get_monte_carlo("NVDA")
+
+    assert sent == [None], "the mismatched payment must never be sent"
+    assert c._x402_disabled_reason is not None
+    assert c.payment_spend_summary()["session_spent_usd"] == "0", (
+        "a payment that was never sent must not be charged to the budget"
+    )
+    c.close()
+
+
+def test_a_wallet_signing_the_approved_offer_goes_through():
+    """The contrast — otherwise the check above passes by refusing everything."""
+    wallet = SigningWallet()
+
+    def handler(request):
+        if request.headers.get("X-PAYMENT"):
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(402, json=challenge())
+
+    c = HpsiMcpClient(
+        transport=httpx.MockTransport(handler), wallet=wallet, api_key=KEY,
+        payment_mode=X402_FALLBACK,
+    )
+
+    assert c.get_monte_carlo("NVDA") == {"ok": True}
+    assert wallet.calls == 1
+    assert c.payment_spend_summary()["session_spent_usd"] == "0.1"
+    c.close()
+
+
+def test_a_wallet_that_cannot_report_what_it_signed_still_works():
+    """Refusing every wallet predating `sign()` would break paying clients to
+    close a gap none of them have been shown to have."""
+    legacy = Wallet()   # only `payment_headers`
+
+    def handler(request):
+        if request.headers.get("X-PAYMENT"):
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(402, json=challenge())
+
+    c = HpsiMcpClient(
+        transport=httpx.MockTransport(handler), wallet=legacy, api_key=KEY,
+        payment_mode=X402_FALLBACK,
+    )
+
+    assert c.get_monte_carlo("NVDA") == {"ok": True}
+    c.close()
