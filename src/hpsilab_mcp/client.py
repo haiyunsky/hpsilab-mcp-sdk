@@ -849,10 +849,14 @@ Fix:
                 window=window if isinstance(window, str) else None,
                 retry_after_seconds=self._retry_after_seconds(response, body),
                 reset_at=reset_at if isinstance(reset_at, str) else None,
-                register_url=conv["register_url"],
-                pricing_url=conv["pricing_url"],
+                register_url=conv["register_url"] if self._api_key is None else None,
+                pricing_url=conv["pricing_url"] if self._api_key is not None else None,
                 upgrade_message=conv["upgrade_message"],
-                register=body.get("register") if isinstance(body.get("register"), str) else None,
+                register=(
+                    body.get("register")
+                    if self._api_key is None and isinstance(body.get("register"), str)
+                    else None
+                ),
                 upgrade_hint=body.get("upgrade_hint") if isinstance(body.get("upgrade_hint"), str) else None,
             )
         raise HpsiMcpAPIError(

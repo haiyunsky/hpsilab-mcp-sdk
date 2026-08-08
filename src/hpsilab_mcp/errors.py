@@ -265,14 +265,44 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         register: Optional[str] = None,
         upgrade_hint: Optional[str] = None,
     ) -> None:
-        super().__init__(message, status_code=status_code, response_text=response_text, body=body)
+        # Keep traceback/console output deliberately short. The backend may
+        # include quota explanations, registration links and upgrade copy in
+        # its human message; all of that remains available in ``body`` and the
+        # promoted attributes below, but it should not make ``str(error)`` a
+        # paragraph. A retry delay is the only immediately actionable detail.
+        window_label = {"minute": "min", "second": "sec", "hour": "hour"}.get(
+            window or "", window
+        )
+        if limit is not None and window_label:
+            short_message = f"Too many requests ({limit}/{window_label}). Please slow down"
+        else:
+            short_message = "Too many requests. Please slow down"
+        if retry_after_seconds is not None:
+            short_message += f" and try again in {retry_after_seconds}s."
+        else:
+            short_message += "."
+        safe_register = safe_public_url(register_url) or safe_public_url(register)
+        safe_pricing = safe_public_url(pricing_url)
+        links = []
+        if safe_register:
+            links.append(f"Register: {safe_register}")
+        if safe_pricing:
+            links.append(f"Upgrade: {safe_pricing}")
+        if links:
+            short_message += " " + " | ".join(links)
+        super().__init__(
+            short_message,
+            status_code=status_code,
+            response_text=response_text,
+            body=body,
+        )
         self.tool = redact_sensitive_text(tool) if tool else None
         self.limit = limit
         self.window = window
         self.retry_after_seconds = retry_after_seconds
         self.reset_at = redact_sensitive_text(reset_at) if reset_at else None
-        self.register_url = safe_public_url(register_url)
-        self.pricing_url = safe_public_url(pricing_url)
+        self.register_url = safe_register
+        self.pricing_url = safe_pricing
         self.upgrade_message = redact_sensitive_text(upgrade_message) if upgrade_message else None
         self.register = safe_public_url(register)
         self.upgrade_hint = redact_sensitive_text(upgrade_hint) if upgrade_hint else None

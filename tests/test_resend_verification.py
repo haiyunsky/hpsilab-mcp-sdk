@@ -52,7 +52,8 @@ def test_resend_verification_cooldown_raises_rate_limit_error():
     with pytest.raises(HpsiMcpRateLimitError) as exc:
         _client(handler).resend_verification_email()
 
-    assert "wait a moment" in str(exc.value)
+    assert str(exc.value) == "Too many requests. Please slow down."
+    assert "wait a moment" in exc.value.body["detail"]
 
 
 def test_resend_verification_without_an_account_key_raises_auth_error():

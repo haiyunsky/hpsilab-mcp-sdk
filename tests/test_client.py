@@ -228,7 +228,7 @@ class HpsiMcpClientTests(unittest.TestCase):
             client.get_equity_curve("NVDA")
 
         self.assertEqual(context.exception.status_code, 429)
-        self.assertEqual(str(context.exception), "Too many requests")
+        self.assertEqual(str(context.exception), "Too many requests. Please slow down.")
         client.close()
 
     def test_error_message_prefers_message_over_error_code(self) -> None:
@@ -247,7 +247,37 @@ class HpsiMcpClientTests(unittest.TestCase):
         with self.assertRaises(HpsiMcpRateLimitError) as context:
             client.get_equity_curve("NVDA")
 
-        self.assertEqual(str(context.exception), "Daily limit reached. Register free.")
+        self.assertEqual(str(context.exception), "Too many requests. Please slow down.")
+        client.close()
+
+    def test_rate_limit_error_message_is_short_and_keeps_retry_delay(self) -> None:
+        long_message = "Daily quota reached. " + ("Upgrade or register. " * 30)
+        client = HpsiMcpClient(
+            api_key=_KEY,
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    429,
+                    headers={"Retry-After": "23"},
+                    json={
+                        "message": long_message,
+                        "tool": "get_ai_prediction",
+                        "limit": 10,
+                        "window": "minute",
+                    },
+                )
+            ),
+        )
+
+        with self.assertRaises(HpsiMcpRateLimitError) as context:
+            client.get_ai_prediction("NVDA")
+
+        error = context.exception
+        self.assertEqual(
+            str(error),
+            "Too many requests (10/min). Please slow down and try again in 23s.",
+        )
+        self.assertEqual(error.retry_after_seconds, 23)
+        self.assertEqual(error.body["message"], long_message)
         client.close()
 
     def test_anon_rate_limit_warns_once(self) -> None:
@@ -412,13 +442,44 @@ class HpsiMcpClientTests(unittest.TestCase):
         self.assertEqual(error.tool, "get_ai_prediction")
         self.assertEqual(error.limit, 30)
         self.assertEqual(error.window, "day")
-        self.assertEqual(error.register_url, "https://hpsilab.com/register")
+        self.assertIsNone(error.register_url)
         self.assertEqual(error.pricing_url, "https://hpsilab.com/pricing")
         self.assertEqual(error.upgrade_message, "Register free for 3x the quota: https://hpsilab.com/register")
-        self.assertEqual(error.register, "https://hpsilab.com/register")
+        self.assertIsNone(error.register)
         self.assertEqual(error.upgrade_hint, "Upgrade at https://hpsilab.com/pricing")
         # Non-sensitive fields remain available beyond promoted attributes.
         self.assertEqual(error.body, body)
+        self.assertEqual(
+            str(error),
+            "Too many requests (30/day). Please slow down. "
+            "Upgrade: https://hpsilab.com/pricing",
+        )
+        client.close()
+
+    def test_anonymous_rate_limit_displays_register_link_only(self) -> None:
+        body = {
+            "message": "Daily limit reached.",
+            "upgrade": {
+                "register_url": "https://hpsilab.com/register",
+                "pricing_url": "https://hpsilab.com/pricing",
+            },
+        }
+        client = HpsiMcpClient(
+            wallet=_FakeWallet(),
+            transport=httpx.MockTransport(lambda request: httpx.Response(429, json=body)),
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with self.assertRaises(HpsiMcpRateLimitError) as context:
+                client.get_ai_prediction("NVDA")
+
+        self.assertEqual(
+            str(context.exception),
+            "Too many requests. Please slow down. Register: https://hpsilab.com/register",
+        )
+        self.assertEqual(context.exception.register_url, "https://hpsilab.com/register")
+        self.assertIsNone(context.exception.pricing_url)
         client.close()
 
     def test_auth_error_carries_conversion_fields_for_no_credentials_401(self) -> None:
