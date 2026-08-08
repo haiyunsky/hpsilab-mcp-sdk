@@ -563,3 +563,57 @@ def test_the_spend_summary_never_carries_wallet_material():
     assert "signed" not in rendered
     assert "0x" not in rendered
     c.close()
+
+
+# ---------------------------------------------------------------------------
+# A wallet is not a top-up for an account
+# ---------------------------------------------------------------------------
+
+
+def test_a_keyed_client_never_pays_when_credits_run_out():
+    """The README used to show `api_key=` and `wallet=` together as if the
+    wallet were a fallback for an exhausted balance. It is not, and the reason
+    is server-side: the API does not offer x402 to a caller it can identify
+    (`rate_limit._maybe_payment_challenge` returns the original refusal
+    untouched for a signed-in subject; the MCP gate runs the tool as soon as
+    `_real_account` resolves). What comes back is `insufficient_credits` — a
+    402 with no `accepts` — so there is nothing to authorise.
+
+    Worth a test rather than a comment: nothing in the SDK enforces this, and
+    a future server change could start offering it. If that happens this test
+    fails, which is the moment to update the documentation rather than years
+    later.
+    """
+    wallet = Wallet()
+    c = client_for(
+        httpx.Response(402, json=REFUSAL),
+        wallet=wallet,
+        api_key=KEY,
+        payment_mode=X402_FALLBACK,
+    )
+
+    with pytest.raises(HpsiMcpInsufficientCreditsError):
+        c.get_monte_carlo("NVDA")
+
+    assert wallet.calls == 0, "a Credits refusal must never reach the wallet"
+    assert c.payment_spend_summary()["session_spent_usd"] == "0"
+    c.close()
+
+
+def test_the_same_client_without_a_key_does_pay():
+    """The contrast that makes the rule legible: identical policy, identical
+    wallet, and the only difference is whether the caller has an account."""
+    wallet = Wallet()
+
+    def handler(request):
+        if request.headers.get("X-PAYMENT"):
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(402, json=challenge())
+
+    c = HpsiMcpClient(
+        transport=httpx.MockTransport(handler), wallet=wallet, payment_mode=X402_FALLBACK
+    )
+
+    assert c.get_monte_carlo("NVDA") == {"ok": True}
+    assert wallet.calls == 1
+    c.close()

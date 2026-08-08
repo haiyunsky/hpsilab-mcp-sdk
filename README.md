@@ -249,8 +249,7 @@ exists. The default mode is **`credits_only`**: the SDK never pays.
 from hpsilab_mcp import HpsiMcpClient, PaymentPolicy, X402Wallet
 
 client = HpsiMcpClient(
-    api_key=API_KEY,
-    wallet=X402Wallet(PRIVATE_KEY),
+    wallet=X402Wallet(PRIVATE_KEY),    # no api_key — see the note below
     payment_policy=PaymentPolicy(
         mode="x402_fallback",          # the opt-in; default "credits_only"
         max_payment_per_call="0.20",
@@ -265,13 +264,29 @@ client = HpsiMcpClient(
 client.payment_spend_summary()   # what's been spent, and against which ceilings
 ```
 
+> **A wallet does not top up an account.** Adding `api_key=` to the client
+> above does not give it a pay-per-call fallback for when Credits run out —
+> the wallet would simply never be used. The API does not offer x402 to a
+> caller it can identify: a signed-in request that exceeds its plan gets
+> `402 insufficient_credits`, which carries no payment offer at all, so
+> `PaymentPolicy` has nothing to authorise and the SDK raises
+> `HpsiMcpInsufficientCreditsError`. Buying Credits and paying per call are
+> two separate doors, and holding a key means you are already through the
+> first one.
+>
+> So a wallet is worth configuring in exactly one situation: a client with
+> **no** `api_key`, paying its own way without an account. If you have a key
+> and run out of Credits, the way forward is
+> [upgrading](https://hpsilab.com/pricing), not a wallet.
+
 `payment_mode="x402_fallback"` is shorthand when the default ceilings suit you.
 
 When `payment_mode` is not given, it is derived:
 
 | Wallet came from | `api_key` | Mode |
 | --- | --- | --- |
-| `wallet=` in the constructor | either | `x402_fallback` |
+| `wallet=` in the constructor | absent | `x402_fallback` |
+| `wallet=` in the constructor | present | `x402_fallback`, but see the note above — nothing ever offers this client a payment |
 | `HPSILAB_X402_PRIVATE_KEY` | absent | `x402_fallback` |
 | `HPSILAB_X402_PRIVATE_KEY` | present | `credits_only` |
 

@@ -7,6 +7,18 @@ so upgrading is safe and changes nothing at runtime.
 
 ### Fixed (documentation)
 
+* **The `PaymentPolicy` example showed `api_key=` and `wallet=` together, as
+  if the wallet were a fallback for an exhausted Credit balance. It is not —
+  in that configuration the wallet is never used at all.** The API does not
+  offer x402 to a caller it can identify: a signed-in request over its plan
+  gets `402 insufficient_credits`, which carries no payment offer, so
+  `PaymentPolicy` has nothing to authorise and `HpsiMcpInsufficientCreditsError`
+  is raised. Buying Credits and paying per call are separate doors. The
+  example is now keyless, with the rule stated next to it and two tests
+  holding it — including one that fails if the API ever starts offering
+  payment to keyed callers, so the docs get corrected then rather than years
+  later.
+
 * **The pricing table implied every priced tool could be bought with a wallet.
   Three of them cannot.** Pay-per-call is an allowlist on the server side, and
   `analyze_stock` (a composite whose partial fan-out failure has no refund
