@@ -137,10 +137,18 @@ from hpsilab_mcp import HpsiMcpRateLimitError
 try:
     client.get_ai_prediction("NVDA")
 except HpsiMcpRateLimitError as exc:
+    print(str(exc))
+    # Too many requests (10/min). Please slow down and try again in 34s.
+    # Anonymous: Register: https://hpsilab.com/register
+    # API-key Free user: Upgrade: https://hpsilab.com/pricing
     print(exc.tool, exc.limit, exc.window)     # get_ai_prediction 30 day
-    print(exc.register_url, exc.pricing_url)   # where to register / upgrade
-    print(exc.body)                            # the full raw response, if needed
+    print(exc.register_url, exc.pricing_url)   # exactly one conversion route
+    print(exc.body)                            # recursively redacted context
 ```
+
+Anonymous clients are shown only the registration route. Clients using an API
+key are shown only the paid upgrade route. The SDK validates both URLs before
+including them in an exception.
 
 An unresolved `401` raises `HpsiMcpConfigError` and opens an authentication
 circuit breaker on that Client. Later calls fail locally without another HTTP

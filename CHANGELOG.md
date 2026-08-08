@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.13.5 - 2026-08-08
+
+### Changed
+
+* `HpsiMcpRateLimitError` now has a compact, stable display message while
+  retaining the redacted response context and structured limit fields. When
+  available it includes the limit and retry delay, for example:
+  `Too many requests (10/min). Please slow down and try again in 34s.`
+* Conversion links are identity-aware: anonymous clients receive only the
+  registration link, while API-key Free clients receive only the paid upgrade
+  link. Links are restricted to the public `hpsilab.com/register` and
+  `hpsilab.com/pricing` endpoints.
+* Server-supplied long-form explanations no longer expand the exception text;
+  recursively redacted details remain available through typed attributes and
+  `body` for callers that need them.
+
 ## v0.13.4 - 2026-08-08
 
 The client's half of "never pay twice for one call". The API's half shipped
