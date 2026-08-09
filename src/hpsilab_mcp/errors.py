@@ -211,7 +211,14 @@ class HpsiMcpPaymentError(HpsiMcpAPIError):
             r"\bPayment rejected:\s*([A-Za-z0-9_-]{1,80})", message, re.IGNORECASE
         )
         if rejected:
-            display_message = f"Payment rejected: {rejected.group(1)}."
+            reason = rejected.group(1).lower()
+            if reason == "invalid_payload":
+                display_message = (
+                    "Payment rejected: invalid_payload (the facilitator could not validate "
+                    "the signed payment payload; wallet balance was not confirmed)."
+                )
+            else:
+                display_message = f"Payment rejected: {reason}."
         super().__init__(
             display_message,
             status_code=status_code,

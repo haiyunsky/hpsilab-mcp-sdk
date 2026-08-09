@@ -236,6 +236,16 @@ except HpsiMcpPaymentError as exc:
     print(exc.price, exc.accepts)
 ```
 
+Known facilitator rejections retain their safe protocol meaning. An empty
+wallet reports `Payment rejected: insufficient_funds.` An `invalid_payload`
+reports that the signed payload could not be validated and that wallet balance
+was not confirmed; it does not incorrectly claim insufficient funds. Complete
+response context remains available through recursively redacted exception
+fields such as `body`, while raw facilitator diagnostics are not copied into
+`str(exc)`. Registration and plan choices remain separate account flows
+because the exception itself does not know which conversion route is
+appropriate for the caller.
+
 The rest of the client keeps working — one tool being priced says nothing
 about the next one.
 

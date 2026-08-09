@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.13.8 - 2026-08-10
+
+### Changed
+
+* Corrected `HpsiMcpPaymentError` rejection details: `insufficient_funds`
+  remains an explicit empty-wallet reason, while `invalid_payload` now retains
+  the safe clarification that the facilitator could not validate the signed
+  payload and therefore did not confirm the wallet balance. Arbitrary
+  facilitator exception text is still excluded from the public exception.
+  Registration and plan guidance stays in the account/payment flows where
+  caller identity and payment context are known.
+* Updated the README, API reference, and upgrading guide to document the
+  compact public message and the structured, redacted diagnostic fields.
+
 ## v0.13.5 - 2026-08-08
 
 ### Changed

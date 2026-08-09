@@ -47,15 +47,28 @@ class _StubWallet:
 
 
 class PaymentFlowTests(unittest.TestCase):
-    def test_facilitator_rejection_has_a_one_line_message(self) -> None:
+    def test_invalid_payload_keeps_the_safe_balance_explanation(self) -> None:
         error = HpsiMcpPaymentError(
             "Payment rejected: invalid_payload (the facilitator could not validate "
             "the signed payment payload; wallet balance was not confirmed).",
             body={"error": "full redacted diagnostic remains structured"},
         )
 
-        self.assertEqual(str(error), "Payment rejected: invalid_payload.")
+        self.assertEqual(
+            str(error),
+            "Payment rejected: invalid_payload (the facilitator could not validate "
+            "the signed payment payload; wallet balance was not confirmed).",
+        )
         self.assertEqual(error.body["error"], "full redacted diagnostic remains structured")
+
+    def test_empty_wallet_balance_keeps_insufficient_funds_reason(self) -> None:
+        error = HpsiMcpPaymentError(
+            "Payment rejected: insufficient_funds",
+            body={"invalidReason": "insufficient_funds"},
+        )
+
+        self.assertEqual(str(error), "Payment rejected: insufficient_funds.")
+        self.assertEqual(error.body["invalidReason"], "insufficient_funds")
 
     def test_402_with_an_account_but_no_wallet_suggests_paying_or_upgrading(self) -> None:
         """Reaching a 402 with `self._wallet is None` now always means a real
