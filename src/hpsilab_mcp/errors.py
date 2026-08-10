@@ -121,6 +121,32 @@ class HpsiMcpConfigError(HpsiMcpError):
     """
 
 
+class HpsiMcpValidationError(HpsiMcpError):
+    """Raised before I/O when an SDK argument cannot form a valid request."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error: str,
+        retryable: bool = True,
+        next_action: str = "provide_email",
+    ) -> None:
+        super().__init__(message)
+        self.error = error
+        self.message = message
+        self.retryable = retryable
+        self.next_action = next_action
+        self.credits_charged = 0
+        self.body = {
+            "error": error,
+            "message": message,
+            "retryable": retryable,
+            "next_action": next_action,
+            "credits_charged": 0,
+        }
+
+
 class HpsiMcpConnectionError(HpsiMcpError):
     """Raised when a request fails before the API returns a response."""
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.13.10 - 2026-08-10
+
+- Reject missing, blank, and malformed registration email addresses locally in
+  both registration entry points, before any HTTP request. Validation failures
+  expose `email_required` / `invalid_email`, `retryable=true`,
+  `next_action=provide_email`, and `credits_charged=0`.
+
 ## v0.13.9 - 2026-08-10
 
 ### Changed

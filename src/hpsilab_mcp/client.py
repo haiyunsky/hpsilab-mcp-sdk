@@ -11,6 +11,7 @@ from typing import Any, Mapping, Optional, Sequence, Type
 from urllib.parse import quote
 
 import httpx
+from email_validator import EmailNotValidError, validate_email
 
 from . import __version__
 from .errors import (
@@ -24,6 +25,7 @@ from .errors import (
     HpsiMcpResponseError,
     HpsiMcpSettlementUnknownError,
     HpsiMcpTimeoutError,
+    HpsiMcpValidationError,
     redact_sensitive_text,
     safe_public_url,
 )
@@ -65,7 +67,22 @@ The Client must keep at least one authentication method.
 Configure:
     api_key=
     wallet=
-    HPSILAB_X402_PRIVATE_KEY"""
+HPSILAB_X402_PRIVATE_KEY"""
+
+
+def _registration_email(value: object) -> str:
+    """Validate and normalize registration email before any network I/O."""
+    if value is None or not isinstance(value, str) or not value.strip():
+        raise HpsiMcpValidationError(
+            "A valid email address is required to create an account.",
+            error="email_required",
+        )
+    try:
+        return validate_email(value.strip(), check_deliverability=False).normalized
+    except EmailNotValidError as exc:
+        raise HpsiMcpValidationError(
+            "Enter a valid email address.", error="invalid_email"
+        ) from exc
 
 
 def _default_payment_mode(
@@ -438,6 +455,7 @@ class HpsiMcpClient:
         call rather than switch to the account it just registered), or to
         hand the key to a different process.
         """
+        email = _registration_email(email)
         with self._request_lock:
             self._ensure_auth_circuit_closed()
             response = self._send(
@@ -1193,6 +1211,7 @@ def register(
         result = hpsilab_mcp.register(email="you@example.com")
         client = HpsiMcpClient(api_key=result["api_key"])
     """
+    email = _registration_email(email)
     headers = build_tracking_headers(
         source=_TRACKING_SOURCE,
         client=_TRACKING_CLIENT,

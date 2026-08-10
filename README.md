@@ -451,7 +451,7 @@ payment for it and `HpsiMcpPaymentError` explains that no offer arrived.
 
 ## Version
 
-Current release: **0.13.9**
+Current release: **0.13.10**
 
 ```python
 import hpsilab_mcp

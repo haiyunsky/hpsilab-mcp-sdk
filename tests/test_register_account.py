@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpAPIError, HpsiMcpClient
+from hpsilab_mcp import HpsiMcpAPIError, HpsiMcpClient, HpsiMcpValidationError
 
 ACCOUNT_KEY = "hpsi_" + "z" * 43
 
@@ -182,3 +182,47 @@ def test_registration_carries_the_tool_tracking_header():
 
     _client(handler, wallet=_FakeWallet()).register_account("agent@example.com")
     assert seen["tool"] == "register_account"
+
+
+@pytest.mark.parametrize(
+    ("email", "code"),
+    [
+        (None, "email_required"),
+        ("", "email_required"),
+        ("   ", "email_required"),
+        ("not-an-email", "invalid_email"),
+    ],
+)
+@pytest.mark.parametrize("entrypoint", ["standalone", "client"])
+def test_invalid_email_is_rejected_without_http(email, code, entrypoint):
+    requests = 0
+
+    def handler(request):
+        nonlocal requests
+        requests += 1
+        return _registered()
+
+    transport = httpx.MockTransport(handler)
+    with pytest.raises(HpsiMcpValidationError) as exc:
+        if entrypoint == "standalone":
+            hpsilab_mcp.register(email, base_url="http://testserver", transport=transport)
+        else:
+            _client(handler, wallet=_FakeWallet()).register_account(email)
+
+    assert requests == 0
+    assert exc.value.error == code
+    assert exc.value.retryable is True
+    assert exc.value.next_action == "provide_email"
+    assert exc.value.credits_charged == 0
+
+
+def test_registration_email_is_normalized_before_sending():
+    def handler(request):
+        assert json.loads(request.content) == {"email": "Agent@example.com"}
+        return _registered()
+
+    hpsilab_mcp.register(
+        "  Agent@EXAMPLE.COM  ",
+        base_url="http://testserver",
+        transport=httpx.MockTransport(handler),
+    )
