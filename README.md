@@ -54,24 +54,15 @@ Path B end-to-end — register, then call a tool:
 
 ```python
 import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
-result = hpsilab_mcp.register(email="you@example.com")
-client = HpsiMcpClient(api_key=result["api_key"])
-
-calls = {
-    "analyze_stock": client.analyze_stock("NVDA"),
-    "get_ai_prediction": client.get_ai_prediction("NVDA"),
-    "get_iv_radar": client.get_iv_radar("NVDA"),
-    "get_option_pressure": client.get_option_pressure("NVDA"),
-    "get_pretrade_risk_scan": client.get_pretrade_risk_scan("NVDA"),
-    "get_monte_carlo": client.get_monte_carlo("NVDA"),
-    "get_equity_curve": client.get_equity_curve("NVDA"),
-    "generate_stock_images": client.generate_stock_images("NVDA"),
-    "generate_stock_research_report": client.generate_stock_research_report("NVDA"),
-}
-
-print(calls["analyze_stock"])
+try:
+    account = hpsilab_mcp.register(email="you@example.com")
+    client = HpsiMcpClient(api_key=account["api_key"])
+    result = client.analyze_stock("NVDA")
+    print(result)
+except HpsiMcpError as exc:
+    print(f"HPSILab request failed: {exc}")
 ```
 
 ## Authentication
@@ -83,15 +74,17 @@ construction time, before any request goes out, rather than letting an
 unauthenticated call reach the API and fail there.
 
 ```python
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
-client = HpsiMcpClient(
-    api_key="YOUR_API_KEY",
-    base_url="https://hpsilab.com",
-)
-
-result = client.get_ai_prediction("TSLA")
-print(result)
+try:
+    client = HpsiMcpClient(
+        api_key="YOUR_API_KEY",
+        base_url="https://hpsilab.com",
+    )
+    result = client.get_ai_prediction("TSLA")
+    print(result)
+except HpsiMcpError as exc:
+    print(f"Prediction request failed: {exc}")
 ```
 
 ### Credits
@@ -172,11 +165,17 @@ neither an `api_key` nor a wallet yet. No password, no web form:
 
 ```python
 import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpAPIError, HpsiMcpClient, HpsiMcpError
 
-result = hpsilab_mcp.register(email="you@example.com")
-client = HpsiMcpClient(api_key=result["api_key"])
-client.get_monte_carlo("NVDA")     # now metered as your account
+try:
+    account = hpsilab_mcp.register(email="you@example.com")
+    client = HpsiMcpClient(api_key=account["api_key"])
+    result = client.get_monte_carlo("NVDA")  # now metered as your account
+    print(result)
+except HpsiMcpAPIError as exc:
+    print(f"API rejected the request ({exc.status_code}): {exc}")
+except HpsiMcpError as exc:
+    print(f"Request failed before a valid API response: {exc}")
 ```
 
 The account is *also* bound to this caller server-side — so a process that
@@ -206,7 +205,15 @@ Free plan — until the link in that email is confirmed. If the email never
 arrived or the link expired, request a new one instead of registering again:
 
 ```python
-client.resend_verification_email()
+from hpsilab_mcp import HpsiMcpConfigError, HpsiMcpRateLimitError
+
+try:
+    client.resend_verification_email()
+    print("Verification email sent.")
+except HpsiMcpRateLimitError as exc:
+    print(f"Please wait before trying again: {exc}")
+except HpsiMcpConfigError as exc:
+    print(f"A valid API key is required: {exc}")
 ```
 
 Requires a real account key (`api_key=`, or whatever `register_account()`
@@ -261,10 +268,26 @@ about the next one.
 With a wallet, the client signs the challenge and repeats the request for you:
 
 ```python
-from hpsilab_mcp import HpsiMcpClient, X402Wallet
+from hpsilab_mcp import (
+    HpsiMcpError,
+    HpsiMcpPaymentError,
+    HpsiMcpSettlementUnknownError,
+    HpsiMcpClient,
+    X402Wallet,
+)
 
 client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
-client.get_monte_carlo("NVDA")   # no account needed — paid per call
+
+try:
+    result = client.get_monte_carlo("NVDA")  # no account needed — paid per call
+    print(result)
+except HpsiMcpSettlementUnknownError as exc:
+    # Never retry automatically: the payment may already have settled.
+    print(f"Payment outcome unknown; reconcile call {exc.call_id}.")
+except HpsiMcpPaymentError as exc:
+    print(f"Payment was not completed: {exc}")
+except HpsiMcpError as exc:
+    print(f"Request failed: {exc}")
 ```
 
 ### Holding a wallet is not the same as agreeing to spend it
