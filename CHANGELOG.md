@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.13.9 - 2026-08-10
+
+### Changed
+
+* Expanded the README examples with practical exception handling for account
+  registration, authenticated requests, verification-email resends, rate
+  limits, and x402 payments.
+* Documented `HpsiMcpSettlementUnknownError` separately from ordinary payment
+  failures so callers do not automatically retry a payment whose settlement
+  outcome is unknown.
+
 ## v0.13.8 - 2026-08-10
 
 ### Changed
