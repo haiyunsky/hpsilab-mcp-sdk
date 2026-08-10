@@ -32,7 +32,16 @@ without an account](#paying-without-an-account)). Two ways to get a key:
 
   ```python
   import hpsilab_mcp
-  api_key = hpsilab_mcp.register(email="you@example.com")["api_key"]
+  from hpsilab_mcp import HpsiMcpAPIError
+
+  try:
+      account = hpsilab_mcp.register(email="you@example.com")
+      print(account["api_key"])
+  except HpsiMcpAPIError as exc:
+      if exc.status_code == 422:
+          print("Invalid email address.")
+      else:
+          print(f"Registration failed: {exc}")
   ```
 
 Either way you end up with a real `hpsi_` key — pass it as `api_key=`. See
