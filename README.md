@@ -126,7 +126,10 @@ except HpsiMcpInsufficientCreditsError as exc:
 
 Credits and rate limits are separate meters: Credits decide *whether* you may
 spend compute, RPM and concurrency decide *how fast*. A Credits refusal is an
-HTTP 403 with `error: "insufficient_credits"`, never a 429.
+HTTP 402 with `error: "insufficient_credits"`, never a 429. After the first
+refusal, the client blocks concurrent and subsequent calls locally for 60
+seconds. Call `client.clear_insufficient_credits_circuit()` after adding
+Credits to recheck immediately.
 
 ### Authentication failures and rate limits
 
@@ -451,7 +454,7 @@ payment for it and `HpsiMcpPaymentError` explains that no offer arrived.
 
 ## Version
 
-Current release: **0.13.10**
+Current release: **0.13.11**
 
 ```python
 import hpsilab_mcp

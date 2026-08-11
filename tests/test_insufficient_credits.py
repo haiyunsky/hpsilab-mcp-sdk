@@ -15,14 +15,17 @@ ways to get this badly wrong, and both were live before this contract:
 The legacy **403** form is still recognised — SDK and API version independently,
 and a caller may be pointed at either.
 """
+
 from __future__ import annotations
+
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
 
 from hpsilab_mcp import (
     HpsiMcpAuthError,
-    HpsiMcpPaymentError,
     HpsiMcpClient,
     HpsiMcpConfigError,
     HpsiMcpInsufficientCreditsError,
@@ -133,7 +136,10 @@ def test_a_real_challenge_is_still_paid():
     """The other 402. A wallet-configured client must keep settling these, or
     disambiguating the two statuses has broken pay-per-call."""
     wallet = _RecordingWallet()
-    responses = [httpx.Response(402, json=_CHALLENGE), httpx.Response(200, json={"ok": True})]
+    responses = [
+        httpx.Response(402, json=_CHALLENGE),
+        httpx.Response(200, json={"ok": True}),
+    ]
     client = HpsiMcpClient(
         api_key=_KEY,
         wallet=wallet,
@@ -157,7 +163,10 @@ def test_a_402_refusal_does_not_trip_the_auth_breaker():
 
 def test_the_client_still_works_once_credits_are_added():
     """The end-to-end consequence of the breaker staying closed."""
-    responses = [httpx.Response(402, json=_REFUSAL), httpx.Response(200, json={"ok": True})]
+    responses = [
+        httpx.Response(402, json=_REFUSAL),
+        httpx.Response(200, json={"ok": True}),
+    ]
     client = HpsiMcpClient(
         api_key=_KEY,
         transport=httpx.MockTransport(lambda request: responses.pop(0)),
@@ -166,7 +175,70 @@ def test_the_client_still_works_once_credits_are_added():
     with pytest.raises(HpsiMcpInsufficientCreditsError):
         client.get_monte_carlo("NVDA")
 
+    client.clear_insufficient_credits_circuit()
     assert client.get_monte_carlo("NVDA") == {"ok": True}
+
+
+def test_concurrent_credits_refusals_reach_backend_once():
+    requests = 0
+    requests_lock = threading.Lock()
+    start = threading.Barrier(5)
+
+    def handler(request):
+        nonlocal requests
+        with requests_lock:
+            requests += 1
+        return httpx.Response(402, json=_REFUSAL)
+
+    client = HpsiMcpClient(api_key=_KEY, transport=httpx.MockTransport(handler))
+
+    def call(symbol):
+        start.wait()
+        with pytest.raises(HpsiMcpInsufficientCreditsError) as caught:
+            client.get_monte_carlo(symbol)
+        return caught.value
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        errors = list(pool.map(call, ["AMZN", "ARGX", "DKNG", "ABNB", "PINS"]))
+
+    assert requests == 1
+    assert sum(bool(getattr(error, "circuit_open", False)) for error in errors) == 4
+    client.close()
+
+
+def test_different_clients_do_not_share_the_request_lock():
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release = threading.Event()
+
+    def handler(entered):
+        def send(request):
+            entered.set()
+            release.wait(timeout=2)
+            return httpx.Response(200, json={"ok": True})
+
+        return send
+
+    first = HpsiMcpClient(
+        api_key="hpsi_one", transport=httpx.MockTransport(handler(first_entered))
+    )
+    second = HpsiMcpClient(
+        api_key="hpsi_two", transport=httpx.MockTransport(handler(second_entered))
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(first.get_monte_carlo, "AMZN"),
+            pool.submit(second.get_monte_carlo, "ARGX"),
+        ]
+        assert first_entered.wait(timeout=1)
+        assert second_entered.wait(timeout=1)
+        release.set()
+        assert [future.result(timeout=1) for future in futures] == [
+            {"ok": True},
+            {"ok": True},
+        ]
+    first.close()
+    second.close()
 
 
 def test_it_is_not_a_rate_limit_error():
@@ -207,7 +279,9 @@ def test_an_ordinary_403_still_raises_the_plan_error():
     """The other meaning of 403 must keep its own error, or "upgrade your plan"
     and "add Credits" become the same message."""
     client = _client(
-        httpx.Response(403, json={"error": "tool_not_in_plan", "tool": "get_monte_carlo"})
+        httpx.Response(
+            403, json={"error": "tool_not_in_plan", "tool": "get_monte_carlo"}
+        )
     )
 
     with pytest.raises(HpsiMcpAuthError) as caught:

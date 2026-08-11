@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 import warnings
 from decimal import Decimal, InvalidOperation
@@ -17,9 +18,9 @@ from . import __version__
 from .errors import (
     HpsiMcpAPIError,
     HpsiMcpAuthError,
-    HpsiMcpInsufficientCreditsError,
     HpsiMcpConfigError,
     HpsiMcpConnectionError,
+    HpsiMcpInsufficientCreditsError,
     HpsiMcpPaymentError,
     HpsiMcpRateLimitError,
     HpsiMcpResponseError,
@@ -32,17 +33,19 @@ from .errors import (
 from .payments import X402Wallet, wallet_from_env
 from .policy import (
     CREDITS_ONLY,
-    normalize_network,
-    resolve_asset,
     X402_FALLBACK,
     PaymentBudget,
     PaymentPolicy,
+    normalize_network,
+    resolve_asset,
+)
+from .policy import (
     decide as decide_payment,
 )
 from .tracking import build_tracking_headers
 
-
 DEFAULT_BASE_URL = "https://hpsilab.com"
+DEFAULT_INSUFFICIENT_CREDITS_TTL_SECONDS = 60.0
 
 _TRACKING_SOURCE = "sdk"
 _TRACKING_CLIENT = "python-sdk"
@@ -112,7 +115,6 @@ def _default_payment_mode(
     return CREDITS_ONLY
 
 
-
 def _offer_mismatch(approved, agreed: Optional[Mapping[str, Any]]) -> Optional[str]:
     """Why the signed payment disagrees with the approved offer, or None.
 
@@ -144,6 +146,7 @@ def _offer_mismatch(approved, agreed: Optional[Mapping[str, Any]]) -> Optional[s
         return f"signed a different asset than the approved {approved.asset_symbol}"
     return None
 
+
 class HpsiMcpClient:
     """Minimal REST API wrapper for the hosted H|ψ⟩ Quantum Finance APIs."""
 
@@ -157,7 +160,16 @@ class HpsiMcpClient:
         wallet: Optional[X402Wallet] = None,
         payment_mode: Optional[str] = None,
         payment_policy: Optional[PaymentPolicy] = None,
+        insufficient_credits_ttl_seconds: float = DEFAULT_INSUFFICIENT_CREDITS_TTL_SECONDS,
     ) -> None:
+        if (
+            isinstance(insufficient_credits_ttl_seconds, bool)
+            or not isinstance(insufficient_credits_ttl_seconds, (int, float))
+            or insufficient_credits_ttl_seconds < 0
+        ):
+            raise ValueError(
+                "insufficient_credits_ttl_seconds must be a non-negative number"
+            )
         # Pay-per-call is opt-in: an explicit wallet, or HPSILAB_X402_PRIVATE_KEY
         # in the environment. Holding the wallet is not the same as consenting
         # to spend it — `payment_policy` decides that, and defaults to
@@ -216,6 +228,10 @@ class HpsiMcpClient:
         self._unresolved_settlements: dict[str, str] = {}
         self._auth_failed = False
         self._auth_failure_message: Optional[str] = None
+        self._insufficient_credits_ttl_seconds = float(insufficient_credits_ttl_seconds)
+        self._insufficient_credits_failure: Optional[tuple[float, dict[str, Any]]] = (
+            None
+        )
         # Keep the check/request/response transition atomic. Without this,
         # concurrent calls could all leave the process before the first 401 or
         # unpayable 402 trips the breaker. An "out of Credits" 402 never trips
@@ -253,6 +269,12 @@ class HpsiMcpClient:
                         "x402" if self._payment_policy.pays else "credits_only"
                     )
             self._reset_auth_circuit()
+            self._insufficient_credits_failure = None
+
+    def clear_insufficient_credits_circuit(self) -> None:
+        """Allow an immediate balance recheck after Credits are added."""
+        with self._request_lock:
+            self._insufficient_credits_failure = None
 
     def set_wallet(self, wallet: Optional[X402Wallet]) -> None:
         """Replace the x402 wallet and reset this client's breakers.
@@ -364,7 +386,10 @@ class HpsiMcpClient:
         self.close()
 
     def get_ai_prediction(self, symbol: str) -> Any:
-        return self._get(f"/api/ai_prediction/{self._path_symbol(symbol)}", tool_name="get_ai_prediction")
+        return self._get(
+            f"/api/ai_prediction/{self._path_symbol(symbol)}",
+            tool_name="get_ai_prediction",
+        )
 
     def analyze_stock(self, symbol: str, refresh: bool = False) -> Any:
         return self._get(
@@ -381,17 +406,23 @@ class HpsiMcpClient:
         )
 
     def get_option_pressure(self, symbol: str) -> Any:
-        return self._get(f"/api/option_pressure/{self._path_symbol(symbol)}", tool_name="get_option_pressure")
+        return self._get(
+            f"/api/option_pressure/{self._path_symbol(symbol)}",
+            tool_name="get_option_pressure",
+        )
 
     def get_pretrade_risk_scan(self, symbol: str) -> Any:
         return self._get(
-            f"/api/pretrade-risk-scan",
+            "/api/pretrade-risk-scan",
             params={"symbol": self._clean_symbol(symbol)},
             tool_name="get_pretrade_risk_scan",
         )
 
     def get_equity_curve(self, symbol: str) -> Any:
-        return self._get(f"/api/equity_curve/{self._path_symbol(symbol)}", tool_name="get_equity_curve")
+        return self._get(
+            f"/api/equity_curve/{self._path_symbol(symbol)}",
+            tool_name="get_equity_curve",
+        )
 
     def get_equity_curves(self, symbol: str) -> Any:
         """Deprecated plural alias of `get_equity_curve`, kept for one release."""
@@ -403,7 +434,9 @@ class HpsiMcpClient:
         return self.get_equity_curve(symbol)
 
     def get_monte_carlo(self, symbol: str) -> Any:
-        return self._get(f"/api/monte_carlo/{self._path_symbol(symbol)}", tool_name="get_monte_carlo")
+        return self._get(
+            f"/api/monte_carlo/{self._path_symbol(symbol)}", tool_name="get_monte_carlo"
+        )
 
     def generate_stock_images(
         self,
@@ -564,6 +597,7 @@ class HpsiMcpClient:
     ) -> Any:
         with self._request_lock:
             self._ensure_auth_circuit_closed()
+            self._ensure_insufficient_credits_circuit_closed()
             # One id for the whole logical call — the unpaid attempt and the
             # paid retry below are the same call, and the API's settlement
             # ledger is unique on it (spec §12.1/§12.2).
@@ -600,7 +634,13 @@ class HpsiMcpClient:
                     refusal = decision.reason
                 else:
                     response = self._settle_once(
-                        method, path, params, tool_name, response, decision.offer, call_id
+                        method,
+                        path,
+                        params,
+                        tool_name,
+                        response,
+                        decision.offer,
+                        call_id,
                     )
 
             self._raise_for_status(response, payment_refusal=refusal)
@@ -640,7 +680,9 @@ class HpsiMcpClient:
             # implementation may include signed payment context in its
             # exception text or attributes, which must not leak into user
             # tracebacks or logs.
-            self._disable_x402("the configured wallet could not sign the payment challenge")
+            self._disable_x402(
+                "the configured wallet could not sign the payment challenge"
+            )
             return challenge
         if not payment_headers:
             self._disable_x402("the configured wallet produced no payment headers")
@@ -679,7 +721,9 @@ class HpsiMcpClient:
         # stuck on 402 drains the wallet one call at a time. Credits-funded
         # calls are untouched; the API key is not what failed here.
         if response.status_code == 402 and not self._is_insufficient_credits(response):
-            self._disable_x402("a payment was accepted by the wallet but the server still refused")
+            self._disable_x402(
+                "a payment was accepted by the wallet but the server still refused"
+            )
         return response
 
     def _record_unresolved_settlement(
@@ -707,7 +751,42 @@ class HpsiMcpClient:
 
     def _ensure_auth_circuit_closed(self) -> None:
         if self._auth_failed:
-            raise HpsiMcpConfigError(self._auth_failure_message or _MISSING_AUTH_MESSAGE)
+            raise HpsiMcpConfigError(
+                self._auth_failure_message or _MISSING_AUTH_MESSAGE
+            )
+
+    def _remember_insufficient_credits(
+        self, error: HpsiMcpInsufficientCreditsError
+    ) -> None:
+        if self._insufficient_credits_ttl_seconds <= 0:
+            return
+        self._insufficient_credits_failure = (
+            time.monotonic() + self._insufficient_credits_ttl_seconds,
+            {
+                "message": str(error),
+                "status_code": error.status_code,
+                "response_text": error.response_text,
+                "body": error.body,
+                "credits_required": error.credits_required,
+                "credits_remaining": error.credits_remaining,
+                "upgrade_url": error.upgrade_url,
+                "register_url": error.register_url,
+            },
+        )
+
+    def _ensure_insufficient_credits_circuit_closed(self) -> None:
+        failure = self._insufficient_credits_failure
+        if failure is None:
+            return
+        expires_at, fields = failure
+        now = time.monotonic()
+        if now >= expires_at:
+            self._insufficient_credits_failure = None
+            return
+        error = HpsiMcpInsufficientCreditsError(**fields)
+        error.circuit_open = True
+        error.retry_after_seconds = max(1, int(expires_at - now + 0.999))
+        raise error
 
     @staticmethod
     def _has_settleable_offer(response: httpx.Response) -> bool:
@@ -767,7 +846,9 @@ Fix:
         if failure == "timeout":
             raise HpsiMcpTimeoutError("Request timed out.")
         if failure == "connection":
-            raise HpsiMcpConnectionError("Request failed before a response was received.")
+            raise HpsiMcpConnectionError(
+                "Request failed before a response was received."
+            )
         return response
 
     def _raise_for_status(
@@ -800,9 +881,11 @@ Fix:
         # permanently disable this client object, so every later call — including
         # the ones made after Credits are added — would fail without ever
         # reaching the network.
-        if response.status_code in {402, 403} and self._is_insufficient_credits(response):
+        if response.status_code in {402, 403} and self._is_insufficient_credits(
+            response
+        ):
             body = self._response_body(response)
-            raise HpsiMcpInsufficientCreditsError(
+            error = HpsiMcpInsufficientCreditsError(
                 message,
                 status_code=response.status_code,
                 response_text=response.text,
@@ -812,6 +895,8 @@ Fix:
                 upgrade_url=body.get("upgrade_url"),
                 register_url=body.get("register"),
             )
+            self._remember_insufficient_credits(error)
+            raise error
 
         # A 402 that is not a Credits refusal is a payment offer, and it is
         # raised as one *before* the circuit breaker below can see it.
@@ -863,7 +948,9 @@ Fix:
                 response_text=response.text,
                 body=body,
                 tool=tool if isinstance(tool, str) else None,
-                limit=limit if isinstance(limit, int) and not isinstance(limit, bool) else None,
+                limit=limit
+                if isinstance(limit, int) and not isinstance(limit, bool)
+                else None,
                 window=window if isinstance(window, str) else None,
                 retry_after_seconds=self._retry_after_seconds(response, body),
                 reset_at=reset_at if isinstance(reset_at, str) else None,
@@ -875,7 +962,9 @@ Fix:
                     if self._api_key is None and isinstance(body.get("register"), str)
                     else None
                 ),
-                upgrade_hint=body.get("upgrade_hint") if isinstance(body.get("upgrade_hint"), str) else None,
+                upgrade_hint=body.get("upgrade_hint")
+                if isinstance(body.get("upgrade_hint"), str)
+                else None,
             )
         raise HpsiMcpAPIError(
             message,
@@ -1001,7 +1090,12 @@ Fix:
             # key for simple HTTPException bodies (401/403/...); `error` is a
             # last-resort fallback since it's often just a machine code (e.g.
             # "rate_limit_exceeded") rather than something meant for display.
-            detail = data.get("message") or data.get("error_message") or data.get("detail") or data.get("error")
+            detail = (
+                data.get("message")
+                or data.get("error_message")
+                or data.get("detail")
+                or data.get("error")
+            )
             if isinstance(detail, str) and detail:
                 return detail
         return f"API request failed with status {response.status_code}."
@@ -1079,9 +1173,15 @@ Fix:
             upgrade_message = body.get("upgrade_hint")
 
         return {
-            "register_url": register_url if isinstance(register_url, str) and register_url else None,
-            "pricing_url": pricing_url if isinstance(pricing_url, str) and pricing_url else None,
-            "upgrade_message": upgrade_message if isinstance(upgrade_message, str) and upgrade_message else None,
+            "register_url": register_url
+            if isinstance(register_url, str) and register_url
+            else None,
+            "pricing_url": pricing_url
+            if isinstance(pricing_url, str) and pricing_url
+            else None,
+            "upgrade_message": upgrade_message
+            if isinstance(upgrade_message, str) and upgrade_message
+            else None,
         }
 
     def _register_url_from_response(self, response: httpx.Response) -> str:
@@ -1112,7 +1212,9 @@ Fix:
             or "https://hpsilab.com/register"
         )
 
-    def _warn_anon_payment_required(self, price: Optional[str], response: httpx.Response) -> None:
+    def _warn_anon_payment_required(
+        self, price: Optional[str], response: httpx.Response
+    ) -> None:
         """Surface the wallet-free way out of a 402 to the human running this.
 
         A 402 is where an anonymous caller's free allowance ends for good, so
@@ -1221,8 +1323,12 @@ def register(
     headers["User-Agent"] = _USER_AGENT
     failure: Optional[str] = None
     try:
-        with httpx.Client(base_url=base_url.rstrip("/"), transport=transport, timeout=timeout) as http:
-            response = http.post("/api/agent/register", json={"email": email}, headers=headers)
+        with httpx.Client(
+            base_url=base_url.rstrip("/"), transport=transport, timeout=timeout
+        ) as http:
+            response = http.post(
+                "/api/agent/register", json={"email": email}, headers=headers
+            )
     except httpx.TimeoutException:
         failure = "timeout"
     except httpx.RequestError:

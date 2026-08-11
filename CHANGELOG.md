@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.13.11 - 2026-08-11
+
+- Added an instance-local 60-second `insufficient_credits` circuit breaker.
+  The existing request lock now covers breaker check, backend request, and
+  breaker update atomically, so concurrent calls on one client send at most
+  one request after the balance is known to be empty. x402 challenges and
+  settlement behavior are unchanged. Call
+  `clear_insufficient_credits_circuit()` after a top-up to recheck immediately.
+
 ## v0.13.10 - 2026-08-10
 
 - Reject missing, blank, and malformed registration email addresses locally in
