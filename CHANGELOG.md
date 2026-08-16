@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.13.12 - 2026-08-16
+
+- Restored tokenless SDK access through the SDK channel's one-time Anonymous
+  Trial: 36 Credits valid for 72 hours. Account API keys continue to take
+  priority, and invalid credentials never fall back to anonymous access.
+- Added automatic adoption of the server-issued `X-HPSILAB-Anon-Key` and the
+  `anonymous_credential=` constructor argument/property so callers can persist
+  and restore the same SDK-channel Anonymous Billing Owner and balance.
+- Anonymous Credits exhaustion continues to use the existing 402/Register
+  contract. x402 behavior and payment policy are unchanged.
+- Replaced Hatchling with the pinned Setuptools build backend for package
+  builds.
+
 ## v0.13.11 - 2026-08-11
 
 - Added an instance-local 60-second `insufficient_credits` circuit breaker.

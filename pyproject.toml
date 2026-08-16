@@ -1,6 +1,6 @@
 [project]
 name = "hpsilab-mcp"
-version = "0.13.11"
+version = "0.13.12"
 description = "Python SDK for the HPSILab quantitative finance API — options analytics, IV surface modeling, Monte Carlo simulation, and AI-driven predictions, with native MCP support."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -61,29 +61,12 @@ Homepage = "https://hpsilab.com"
 Repository = "https://github.com/haiyunsky/hpsilab-mcp-sdk"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build]
-exclude = [
-  "/.gitignore",
-  "/.agents",
-  "/CHANGELOG.md",
-  "/tests",
-  "/docs",
-  "/examples",
-  "/python",
-  "/typescript",
-]
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
 
-# `/.gitignore` above is honoured by the wheel and **cannot** be honoured by
-# the sdist: hatchling force-includes every VCS exclusion file into the sdist
-# so the archive can reproduce its own file selection
-# (hatchling/builders/sdist.py, `force_include[exclusion_file]`). No exclude,
-# and not even `only-include`, removes it — verified against hatchling 1.31.0.
-#
-# So the sdist ships a 257-byte list of cache directories, and the wheel — the
-# artifact `pip install` actually uses — ships the package and nothing else.
-# Recorded here because 0.12.2's changelog claimed the file was excluded, and
-# the next person to read that and see the file will otherwise go looking for
-# a config mistake that does not exist.
+[tool.setuptools.packages.find]
+where = ["src"]

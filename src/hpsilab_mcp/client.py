@@ -50,6 +50,8 @@ DEFAULT_INSUFFICIENT_CREDITS_TTL_SECONDS = 60.0
 _TRACKING_SOURCE = "sdk"
 _TRACKING_CLIENT = "python-sdk"
 _USER_AGENT = f"hpsilab-python-sdk/{__version__}"
+_ANON_KEY_PREFIX = "hpsi_anon_"
+_ANON_KEY_HEADER = "X-HPSILAB-Anon-Key"
 
 _MISSING_AUTH_MESSAGE = """API key or wallet required.
 
@@ -161,6 +163,7 @@ class HpsiMcpClient:
         payment_mode: Optional[str] = None,
         payment_policy: Optional[PaymentPolicy] = None,
         insufficient_credits_ttl_seconds: float = DEFAULT_INSUFFICIENT_CREDITS_TTL_SECONDS,
+        anonymous_credential: Optional[str] = None,
     ) -> None:
         if (
             isinstance(insufficient_credits_ttl_seconds, bool)
@@ -176,13 +179,10 @@ class HpsiMcpClient:
         # `credits_only`. See `_default_payment_mode`.
         resolved_wallet = wallet if wallet is not None else wallet_from_env()
 
-        # Anonymous free access was retired (API key is mandatory) — x402
-        # payment is the one remaining key-free path, so identity has to be
-        # one or the other, checked before anything is constructed. A fresh
-        # caller with neither should use the standalone `register()`
-        # function (no client instance needed) to get a key first.
-        if not api_key and resolved_wallet is None:
-            raise HpsiMcpConfigError(_MISSING_AUTH_MESSAGE)
+        if anonymous_credential is not None and not anonymous_credential.startswith(
+            _ANON_KEY_PREFIX
+        ):
+            raise HpsiMcpConfigError("Invalid anonymous credential format.")
 
         # Tracking headers first (defaults), caller-supplied headers layered on
         # top, then the business header (Authorization) set last so it can
@@ -196,8 +196,11 @@ class HpsiMcpClient:
         request_headers.update(headers or {})
         if api_key:
             request_headers["Authorization"] = f"Bearer {api_key}"
+        elif anonymous_credential:
+            request_headers["Authorization"] = f"Bearer {anonymous_credential}"
 
         self._api_key = api_key
+        self._anonymous_credential = anonymous_credential
         self._wallet = resolved_wallet
         self._payment_policy = self._initial_payment_policy(
             payment_policy,
@@ -215,6 +218,8 @@ class HpsiMcpClient:
             request_headers["X-HPSILAB-Payment-Mode"] = (
                 "x402" if self._payment_policy.pays else "credits_only"
             )
+        elif not api_key and not anonymous_credential:
+            request_headers["X-HPSILAB-Payment-Mode"] = "anonymous"
         self._budget = PaymentBudget()
         # Separate from the authentication breaker below, and that separation is
         # the point: a wallet that cannot sign says nothing about an API key
@@ -256,20 +261,47 @@ class HpsiMcpClient:
     def set_api_key(self, api_key: Optional[str]) -> None:
         """Replace the API key and reset this client's authentication breaker."""
         with self._request_lock:
-            if not api_key and self._wallet is None:
-                raise HpsiMcpConfigError(_REMOVE_AUTH_MESSAGE)
             self._api_key = api_key
             if api_key:
                 self._client.headers["Authorization"] = f"Bearer {api_key}"
                 self._client.headers.pop("X-HPSILAB-Payment-Mode", None)
             else:
-                self._client.headers.pop("Authorization", None)
+                if self._anonymous_credential:
+                    self._client.headers["Authorization"] = (
+                        f"Bearer {self._anonymous_credential}"
+                    )
+                else:
+                    self._client.headers.pop("Authorization", None)
                 if self._wallet is not None:
                     self._client.headers["X-HPSILAB-Payment-Mode"] = (
                         "x402" if self._payment_policy.pays else "credits_only"
                     )
+                elif not self._anonymous_credential:
+                    self._client.headers["X-HPSILAB-Payment-Mode"] = "anonymous"
             self._reset_auth_circuit()
             self._insufficient_credits_failure = None
+
+    @property
+    def anonymous_credential(self) -> Optional[str]:
+        return self._anonymous_credential
+
+    def set_anonymous_credential(self, credential: Optional[str]) -> None:
+        """Restore or clear the SDK-channel anonymous Billing Owner."""
+        if credential is not None and not credential.startswith(_ANON_KEY_PREFIX):
+            raise HpsiMcpConfigError("Invalid anonymous credential format.")
+        with self._request_lock:
+            self._anonymous_credential = credential
+            if self._api_key:
+                return
+            if credential:
+                self._client.headers["Authorization"] = f"Bearer {credential}"
+                self._client.headers.pop("X-HPSILAB-Payment-Mode", None)
+            else:
+                self._client.headers.pop("Authorization", None)
+                self._client.headers["X-HPSILAB-Payment-Mode"] = (
+                    "x402" if self._wallet is not None and self._payment_policy.pays else
+                    "credits_only" if self._wallet is not None else "anonymous"
+                )
 
     def clear_insufficient_credits_circuit(self) -> None:
         """Allow an immediate balance recheck after Credits are added."""
@@ -849,6 +881,15 @@ Fix:
             raise HpsiMcpConnectionError(
                 "Request failed before a response was received."
             )
+        issued = response.headers.get(_ANON_KEY_HEADER)
+        if (
+            issued
+            and issued.startswith(_ANON_KEY_PREFIX)
+            and not self._api_key
+        ):
+            self._anonymous_credential = issued
+            self._client.headers["Authorization"] = f"Bearer {issued}"
+            self._client.headers.pop("X-HPSILAB-Payment-Mode", None)
         return response
 
     def _raise_for_status(

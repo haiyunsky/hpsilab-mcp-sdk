@@ -49,21 +49,80 @@ def _quota_exceeded():
     return httpx.Response(429, json=body)
 
 
-def test_construction_with_neither_api_key_nor_wallet_raises():
-    with pytest.raises(HpsiMcpConfigError) as caught:
-        HpsiMcpClient(base_url="http://testserver")
+def test_construction_with_neither_api_key_nor_wallet_uses_sdk_anonymous_mode():
+    seen = []
 
-    assert str(caught.value) == """API key or wallet required.
+    def handler(request):
+        seen.append(dict(request.headers))
+        return _ok()
 
-Anonymous access has ended.
+    with _client(handler) as client:
+        assert client.get_monte_carlo("AAPL") == _PAYLOAD
 
-Free API key:
-    hpsilab_mcp.register(email="you@example.com")
+    assert seen[0]["x-hpsilab-source"] == "sdk"
+    assert "authorization" not in seen[0]
 
-Or configure:
-    api_key=
-    wallet=
-    HPSILAB_X402_PRIVATE_KEY"""
+
+def test_anonymous_key_is_saved_and_reused():
+    key = "hpsi_anon_" + "a" * 48
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json=_PAYLOAD, headers={"X-HPSILAB-Anon-Key": key})
+
+    with _client(handler) as client:
+        client.get_monte_carlo("AAPL")
+        client.get_monte_carlo("AAPL")
+        assert client.anonymous_credential == key
+
+    assert seen == [None, f"Bearer {key}"]
+
+
+def test_anonymous_key_can_be_restored_in_a_new_client():
+    key = "hpsi_anon_" + "b" * 48
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return _ok()
+
+    with _client(handler, anonymous_credential=key) as client:
+        client.get_monte_carlo("AAPL")
+
+    assert seen == [f"Bearer {key}"]
+
+
+def test_account_api_key_outranks_restored_anonymous_credential():
+    anon = "hpsi_anon_" + "c" * 48
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return _ok()
+
+    with _client(
+        handler,
+        api_key="hpsi_account_key",
+        anonymous_credential=anon,
+    ) as client:
+        client.get_monte_carlo("AAPL")
+
+    assert seen == ["Bearer hpsi_account_key"]
+
+
+def test_invalid_credential_is_sent_and_not_downgraded_to_tokenless():
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(401, json={"detail": "Invalid or expired token"})
+
+    with _client(handler, api_key="hpsi_invalid") as client:
+        with pytest.raises(HpsiMcpConfigError):
+            client.get_monte_carlo("AAPL")
+
+    assert seen == ["Bearer hpsi_invalid"]
 
 
 def test_construction_with_only_an_api_key_succeeds():

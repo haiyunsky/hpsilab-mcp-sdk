@@ -21,10 +21,28 @@ To let the client pay per call instead of registering an account (see
 pip install "hpsilab-mcp[x402]"
 ```
 
-## Getting an API Key
+## Anonymous Trial and API Keys
 
-`HpsiMcpClient()` requires a real `api_key` (or a `wallet=` — see [Paying
-without an account](#paying-without-an-account)). Two ways to get a key:
+`HpsiMcpClient()` can start without an API key, login, OAuth session, or wallet.
+The first eligible SDK call receives the SDK channel's one-time **36 Credits / 72
+hours** Anonymous Trial. The client automatically adopts the returned
+`hpsi_anon_*` credential and reuses the same Anonymous Billing Owner for later
+calls.
+
+```python
+from hpsilab_mcp import HpsiMcpClient
+
+client = HpsiMcpClient()
+result = client.analyze_stock("NVDA")
+
+# Persist this value if the balance must survive a new client/process.
+saved_credential = client.anonymous_credential
+
+restored = HpsiMcpClient(anonymous_credential=saved_credential)
+```
+
+Register or provide an API key when the Anonymous Credits are exhausted. Two
+ways to get a key:
 
 - **From the website**: sign up at <https://hpsilab.com/register>, then
   **Settings → API Keys**.
@@ -50,7 +68,21 @@ details (email verification, lost-key recovery, idempotent re-calls).
 
 ## Quick Start
 
-Path B end-to-end — register, then call a tool:
+Anonymous end-to-end:
+
+```python
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
+
+try:
+    client = HpsiMcpClient()
+    result = client.analyze_stock("NVDA")
+    print(result)
+    print(client.anonymous_credential)
+except HpsiMcpError as exc:
+    print(f"HPSILab request failed: {exc}")
+```
+
+Registered account end-to-end:
 
 ```python
 import hpsilab_mcp
@@ -67,11 +99,12 @@ except HpsiMcpError as exc:
 
 ## Authentication
 
-Every REST SDK method requires either a real account (`api_key=`) or a
-configured x402 `wallet=` (see [Paying without an
-account](#paying-without-an-account) below) — the SDK enforces this at
-construction time, before any request goes out, rather than letting an
-unauthenticated call reach the API and fail there.
+SDK calls resolve identity in this order: a real account `api_key=` first, then
+a restored SDK `anonymous_credential=`, otherwise a new tokenless SDK Anonymous
+Trial. An invalid credential fails with 401 and never falls back to anonymous.
+A configured x402 `wallet=` remains available under its existing payment policy
+after Credits cannot fund a call; successful x402 settlement is not also charged
+to Credits.
 
 ```python
 from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
@@ -454,7 +487,7 @@ payment for it and `HpsiMcpPaymentError` explains that no offer arrived.
 
 ## Version
 
-Current release: **0.13.11**
+Current release: **0.13.12**
 
 ```python
 import hpsilab_mcp
