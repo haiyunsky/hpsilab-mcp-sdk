@@ -467,8 +467,6 @@ client.set_api_key("NEW_API_KEY")
 client.set_wallet(X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
 ```
 
-See [Upgrading](docs/upgrading.md) for the exception-contract migration.
-
 Pay-per-call is an allowlist. A tool that is not on it answers `401`/`402`
 without an offer, and the way through is an API key or OAuth — not a wallet.
 
