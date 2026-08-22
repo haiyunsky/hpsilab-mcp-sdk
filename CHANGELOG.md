@@ -1,12 +1,15 @@
 # Changelog
 
-## v0.13.13 - 2026-08-23
+## v0.13.14 - 2026-08-23
 
 - Added `upgrade_available` and `upgrade_url` to
   `HpsiMcpRateLimitError`, matching the current HTTP 429 response contract.
 - When the API supplies minimal upgrade guidance, the exception display uses
   the server-provided `upgrade_message` and validated `upgrade_url`. Existing
   `pricing_url` handling remains compatible with older responses.
+- Restored the Hatchling build backend and explicit package exclusions so
+  repository metadata, tests, documentation, examples, and alternate SDK
+  source trees are not included in the wheel.
 
 ## v0.13.12 - 2026-08-16
 

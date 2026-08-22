@@ -489,7 +489,7 @@ payment for it and `HpsiMcpPaymentError` explains that no offer arrived.
 
 ## Version
 
-Current release: **0.13.13**
+Current release: **0.13.14**
 
 ```python
 import hpsilab_mcp

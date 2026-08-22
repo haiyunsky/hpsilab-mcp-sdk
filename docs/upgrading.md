@@ -1,6 +1,6 @@
 # Upgrading hpsilab-mcp
 
-## v0.13.13: structured rate-limit upgrade guidance
+## v0.13.14: structured rate-limit upgrade guidance
 
 `HpsiMcpRateLimitError` now promotes the HTTP 429 fields
 `upgrade_available`, `upgrade_message`, and `upgrade_url` to typed attributes.
