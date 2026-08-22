@@ -303,6 +303,8 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         window: Optional[str] = None,
         retry_after_seconds: Optional[int] = None,
         reset_at: Optional[str] = None,
+        upgrade_available: Optional[bool] = None,
+        upgrade_url: Optional[str] = None,
         register_url: Optional[str] = None,
         pricing_url: Optional[str] = None,
         upgrade_message: Optional[str] = None,
@@ -326,12 +328,16 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         else:
             short_message += "."
         safe_register = safe_public_url(register_url) or safe_public_url(register)
-        safe_pricing = safe_public_url(pricing_url)
+        safe_upgrade_url = safe_public_url(upgrade_url)
+        safe_pricing = safe_public_url(pricing_url) or safe_upgrade_url
         links = []
         if safe_register:
             links.append(f"Register: {safe_register}")
         if safe_pricing:
-            links.append(f"Upgrade: {safe_pricing}")
+            if safe_upgrade_url and upgrade_message:
+                links.append(f"{upgrade_message} {safe_pricing}")
+            else:
+                links.append(f"Upgrade: {safe_pricing}")
         if links:
             short_message += " " + " | ".join(links)
         super().__init__(
@@ -345,6 +351,8 @@ class HpsiMcpRateLimitError(HpsiMcpAPIError):
         self.window = window
         self.retry_after_seconds = retry_after_seconds
         self.reset_at = redact_sensitive_text(reset_at) if reset_at else None
+        self.upgrade_available = upgrade_available
+        self.upgrade_url = safe_upgrade_url
         self.register_url = safe_register
         self.pricing_url = safe_pricing
         self.upgrade_message = redact_sensitive_text(upgrade_message) if upgrade_message else None

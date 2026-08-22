@@ -482,6 +482,31 @@ class HpsiMcpClientTests(unittest.TestCase):
         self.assertIsNone(context.exception.pricing_url)
         client.close()
 
+    def test_rate_limit_displays_minimal_upgrade_guidance(self) -> None:
+        body = {
+            "error": "rate_limit_exceeded",
+            "message": "Too many requests.",
+            "upgrade_available": True,
+            "upgrade_message": "Need higher limits? Upgrade for higher API rate limits.",
+            "upgrade_url": "https://hpsilab.com/pricing",
+        }
+        client = HpsiMcpClient(
+            api_key=_KEY,
+            transport=httpx.MockTransport(lambda request: httpx.Response(429, json=body)),
+        )
+
+        with self.assertRaises(HpsiMcpRateLimitError) as context:
+            client.get_ai_prediction("NVDA")
+
+        error = context.exception
+        self.assertIs(error.upgrade_available, True)
+        self.assertEqual(error.upgrade_message, body["upgrade_message"])
+        self.assertEqual(error.upgrade_url, body["upgrade_url"])
+        self.assertIn(body["upgrade_message"], str(error))
+        self.assertIn(body["upgrade_url"], str(error))
+        self.assertEqual(error.body, body)
+        client.close()
+
     def test_auth_error_carries_conversion_fields_for_no_credentials_401(self) -> None:
         # NotAuthenticatedError shape (backend/app/dependencies/auth.py) - the
         # only 401 that should carry a registration nudge.

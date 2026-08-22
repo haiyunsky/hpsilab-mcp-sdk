@@ -1,5 +1,18 @@
 # Upgrading hpsilab-mcp
 
+## v0.13.13: structured rate-limit upgrade guidance
+
+`HpsiMcpRateLimitError` now promotes the HTTP 429 fields
+`upgrade_available`, `upgrade_message`, and `upgrade_url` to typed attributes.
+The URL is restricted to the trusted public HPSILab pricing endpoint before it
+is exposed or included in `str(exc)`.
+
+Existing integrations using `pricing_url` remain compatible: for a response
+that supplies only `upgrade_url`, `pricing_url` resolves to the same validated
+URL. Prefer `upgrade_available` to decide whether to show an upgrade action and
+`upgrade_url` as its destination. Retry behavior is unchanged; a 429 does not
+open the authentication or Credits circuit breakers.
+
 ## v0.13.8: accurate payment rejection contract
 
 `HpsiMcpPaymentError` again distinguishes an empty wallet

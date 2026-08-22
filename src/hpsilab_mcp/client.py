@@ -995,9 +995,17 @@ Fix:
                 window=window if isinstance(window, str) else None,
                 retry_after_seconds=self._retry_after_seconds(response, body),
                 reset_at=reset_at if isinstance(reset_at, str) else None,
+                upgrade_available=body.get("upgrade_available")
+                if isinstance(body.get("upgrade_available"), bool)
+                else None,
+                upgrade_url=body.get("upgrade_url")
+                if isinstance(body.get("upgrade_url"), str)
+                else None,
                 register_url=conv["register_url"] if self._api_key is None else None,
                 pricing_url=conv["pricing_url"] if self._api_key is not None else None,
-                upgrade_message=conv["upgrade_message"],
+                upgrade_message=body.get("upgrade_message")
+                if isinstance(body.get("upgrade_message"), str)
+                else conv["upgrade_message"],
                 register=(
                     body.get("register")
                     if self._api_key is None and isinstance(body.get("register"), str)
