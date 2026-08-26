@@ -12,7 +12,7 @@
 ## Installation
 
 ```bash
-pip install hpsilab-mcp
+pip install -U "hpsilab-mcp[x402]"
 ```
 
 To let the client pay per call with x402 (see
@@ -59,7 +59,7 @@ try:
         api_key="YOUR_API_KEY",
         base_url="https://hpsilab.com",
     )
-    result = client.get_ai_prediction("TSLA", include_metadata=True)
+    result = client.get_ai_prediction("NVDA", include_metadata=True)
     print(result.data)
     print(result.metadata.raw)
 except HpsiMcpError as exc:
