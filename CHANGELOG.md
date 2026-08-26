@@ -4,11 +4,12 @@
 
 - Added the opt-in `HpsiMcpClient.call_tool(..., include_metadata=True)` full
   return mode for MCP transport adapters.
-- Added `McpToolResult` and `McpDependencyMetadata`, exposing dependency
-  metadata directly from `CallToolResult._meta` without generating IDs in the
-  SDK. Default calls still return the adapter's original value unchanged.
-- Missing metadata safely returns `None`, with empty collections for absent
-  dependency-list fields.
+- Added `McpToolResult` and `McpDependencyMetadata`. The SDK generates opaque,
+  deterministic dependency IDs from the tool name, normalized arguments and
+  business output; MCP Server `_meta` is deliberately ignored. Default calls
+  still return the adapter's original value unchanged.
+- Missing business timestamps safely produce `timestamp=None`; dependency
+  collections remain present and minimal.
 
 ## v0.13.14 - 2026-08-23
 

@@ -268,7 +268,8 @@ class HpsiMcpClient:
 
         The default return is the adapter's original value. Set
         ``include_metadata=True`` to get an :class:`McpToolResult` whose
-        metadata is read directly from MCP ``CallToolResult._meta``.
+        dependency metadata is generated locally by this SDK. MCP Server
+        ``_meta`` is deliberately ignored.
         """
         if not name:
             raise ValueError("Tool name is required.")
@@ -283,7 +284,7 @@ class HpsiMcpClient:
             raise ValueError(f"Duplicate MCP tool arguments: {names}")
         merged.update(tool_arguments)
         raw_result = self._mcp_transport(name, merged)
-        return full_tool_result(raw_result) if include_metadata else raw_result
+        return full_tool_result(name, merged, raw_result) if include_metadata else raw_result
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostic safety
         api_key_state = "configured" if self._api_key else "not-configured"

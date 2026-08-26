@@ -3,8 +3,7 @@
 `hpsilab-mcp` is the official Python SDK for the hosted hpsilab.com REST API — quantitative finance and options analytics (IV surface, Monte Carlo simulation, AI predictions, pre-trade risk scans, and more).
 
 > **Note:** This package wraps REST endpoints and can decode results supplied
-> by an MCP transport adapter. It does not implement MCP transport itself — see
-> [MCP Transport](#mcp-transport) below.
+> by an optional MCP transport adapter. It does not implement MCP transport.
 
 ## Requirements
 
@@ -165,6 +164,39 @@ The two `generate_*` methods create or refresh hosted artifacts and are not
 guaranteed to be idempotent.
 
 These tools return research-oriented information and are not financial advice.
+
+## SDK Dependency Metadata
+
+With `include_metadata=True`, the return value is an `McpToolResult` containing
+the unchanged business value in `data` and an SDK-generated
+`McpDependencyMetadata` in `metadata`:
+
+```json
+{
+  "result_id": "res_...",
+  "source_ids": ["src_..."],
+  "upstream_ids": ["up_..."],
+  "derived_from": [],
+  "timestamp": "2026-08-25"
+}
+```
+
+This metadata belongs entirely to the SDK and does not read, depend on, or
+reuse MCP Server `_meta`. Without `include_metadata=True`, `call_tool` returns
+the adapter's original value unchanged.
+
+- `result_id` identifies the tool name, normalized arguments, and business
+  output. Repeating the same visible call and output produces the same ID.
+- `source_ids` identifies the normalized SDK input set.
+- `upstream_ids` identifies the SDK-visible tool call.
+- `derived_from` is reserved for explicit result dependencies and is empty in
+  the first-phase NVDA workflow.
+- `timestamp` is the latest ISO-8601 business timestamp found in known output
+  fields such as `timestamp`, `as_of`, or `last_date`; it is `None` when the
+  output supplies no trustworthy timestamp.
+
+IDs are opaque implementation identifiers, not database keys. A changed tool
+name, argument, or business output may produce a different ID.
 
 ## Links
 
