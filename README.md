@@ -23,87 +23,44 @@ To let the client pay per call instead of registering an account (see
 pip install "hpsilab-mcp[x402]"
 ```
 
-## Anonymous Trial and API Keys
+## Quick Start
 
-`HpsiMcpClient()` can start without an API key, login, OAuth session, or wallet.
-The first eligible SDK call receives the SDK channel's one-time **36 Credits / 72
-hours** Anonymous Trial. The client automatically adopts the returned
-`hpsi_anon_*` credential and reuses the same Anonymous Billing Owner for later
-calls.
+Register, receive an API key, and run an analysis immediately:
 
 ```python
+import hpsilab_mcp
 from hpsilab_mcp import HpsiMcpClient
 
 try:
-    client = HpsiMcpClient()
+    account = hpsilab_mcp.register(email="you@example.com")
+    api_key = account["api_key"]
+
+    client = HpsiMcpClient(api_key=api_key)
     result = client.analyze_stock("NVDA")
     print(result)
-
-    # Persist this value if the balance must survive a new client/process.
-    saved_credential = client.anonymous_credential
-
-    restored = HpsiMcpClient(
-        anonymous_credential=saved_credential
-    )
 except Exception as e:
     print(f"HPSILab error: {e}")
 ```
 
-Register or provide an API key when the Anonymous Credits are exhausted. Two
-ways to get a key:
-
-- **From the website**: sign up at <https://hpsilab.com/register>, then
-  **Settings → API Keys**.
-- **From code** (no browser, for agents):
-
-  ```python
-  import hpsilab_mcp
-  from hpsilab_mcp import HpsiMcpAPIError
-
-  try:
-      account = hpsilab_mcp.register(email="you@example.com")
-      print(account["api_key"])
-  except HpsiMcpAPIError as exc:
-      if exc.status_code == 422:
-          print("Invalid email address.")
-      else:
-          print(f"Registration failed: {exc}")
-  ```
-
-Either way you end up with a real `hpsi_` key — pass it as `api_key=`. See
-[Registering your own account](#registering-your-own-account-for-agents) for
-details (email verification, lost-key recovery, idempotent re-calls).
-
-## Quick Start
-
-Anonymous end-to-end:
+You can also create the account at <https://hpsilab.com/register>, then copy an
+API key from **Settings → API Keys**:
 
 ```python
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
+from hpsilab_mcp import HpsiMcpClient
 
-try:
-    client = HpsiMcpClient()
-    result = client.analyze_stock("NVDA")
-    print(result)
-    print(client.anonymous_credential)
-except HpsiMcpError as exc:
-    print(f"HPSILab request failed: {exc}")
+client = HpsiMcpClient(api_key="YOUR_API_KEY")
+print(client.get_ai_prediction("NVDA"))
 ```
 
-Registered account end-to-end:
+The emailed verification link unlocks the full Free plan. Calling
+`hpsilab_mcp.register()` again with the same email returns the existing account
+and a fresh key instead of creating a duplicate.
 
-```python
-import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
+### Anonymous Trial
 
-try:
-    account = hpsilab_mcp.register(email="you@example.com")
-    client = HpsiMcpClient(api_key=account["api_key"])
-    result = client.analyze_stock("NVDA")
-    print(result)
-except HpsiMcpError as exc:
-    print(f"HPSILab request failed: {exc}")
-```
+For evaluation, `HpsiMcpClient()` can start without a key and receives the
+one-time **36 Credits / 72 hours** Anonymous Trial. Persist
+`client.anonymous_credential` if a later process must reuse that balance.
 
 ## Authentication
 
@@ -113,20 +70,6 @@ Trial. An invalid credential fails with 401 and never falls back to anonymous.
 A configured x402 `wallet=` remains available under its existing payment policy
 after Credits cannot fund a call; successful x402 settlement is not also charged
 to Credits.
-
-```python
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
-
-try:
-    client = HpsiMcpClient(
-        api_key="YOUR_API_KEY",
-        base_url="https://hpsilab.com",
-    )
-    result = client.get_ai_prediction("TSLA")
-    print(result)
-except HpsiMcpError as exc:
-    print(f"Prediction request failed: {exc}")
-```
 
 ### Credits
 
@@ -162,28 +105,14 @@ refusal, the client blocks concurrent and subsequent calls locally for 60
 seconds. Call `client.clear_insufficient_credits_circuit()` after adding
 Credits to recheck immediately.
 
-### Authentication failures and rate limits
+### Errors and rate limits
 
-A `429` (rate limit / quota exceeded) raises `HpsiMcpRateLimitError` with the
-backend's fields promoted onto it — no need to parse `response_text` yourself:
-
-```python
-from hpsilab_mcp import HpsiMcpRateLimitError
-
-try:
-    client.get_ai_prediction("NVDA")
-except HpsiMcpRateLimitError as exc:
-    print(str(exc))
-    # Too many requests (10/min). Please slow down and try again in 34s.
-    # Anonymous: Register: https://hpsilab.com/register
-    # API-key user: Need higher limits? Upgrade for higher API rate limits.
-    #               https://hpsilab.com/pricing
-    print(exc.tool, exc.limit, exc.window)     # get_ai_prediction 30 day
-    print(exc.upgrade_available)               # True when an upgrade applies
-    print(exc.upgrade_message, exc.upgrade_url)
-    print(exc.register_url, exc.pricing_url)   # compatibility routes
-    print(exc.body)                            # recursively redacted context
-```
+Catch `HpsiMcpError` when an application needs one common SDK error boundary.
+More specific subclasses include `HpsiMcpConfigError` for authentication,
+`HpsiMcpInsufficientCreditsError` for an empty balance, and
+`HpsiMcpRateLimitError` for HTTP 429 responses. Exception objects retain the
+safe structured response fields; normal applications do not need to parse the
+raw response body.
 
 Anonymous clients are shown only the registration route. Clients using an API
 key are shown only the paid upgrade route when the backend makes one available.
@@ -198,22 +127,16 @@ a new Client. A `403` remains `HpsiMcpAuthError`; a `429` remains
 
 ## Registering your own account (for agents)
 
-No client instance needed — this is the entry point for a caller that has
-neither an `api_key` nor a wallet yet. No password, no web form:
+No client instance is needed. Registration requires an email address and
+returns an `api_key` that can be passed directly to `HpsiMcpClient`:
 
 ```python
 import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpAPIError, HpsiMcpClient, HpsiMcpError
+from hpsilab_mcp import HpsiMcpClient
 
-try:
-    account = hpsilab_mcp.register(email="you@example.com")
-    client = HpsiMcpClient(api_key=account["api_key"])
-    result = client.get_monte_carlo("NVDA")  # now metered as your account
-    print(result)
-except HpsiMcpAPIError as exc:
-    print(f"API rejected the request ({exc.status_code}): {exc}")
-except HpsiMcpError as exc:
-    print(f"Request failed before a valid API response: {exc}")
+account = hpsilab_mcp.register(email="you@example.com")
+client = HpsiMcpClient(api_key=account["api_key"])
+print(client.get_monte_carlo("NVDA"))
 ```
 
 The account is *also* bound to this caller server-side — so a process that
@@ -242,17 +165,8 @@ An unverified account stays on the anon-rate daily allowance — not the full
 Free plan — until the link in that email is confirmed. If the email never
 arrived or the link expired, request a new one instead of registering again:
 
-```python
-from hpsilab_mcp import HpsiMcpConfigError, HpsiMcpRateLimitError
-
-try:
-    client.resend_verification_email()
-    print("Verification email sent.")
-except HpsiMcpRateLimitError as exc:
-    print(f"Please wait before trying again: {exc}")
-except HpsiMcpConfigError as exc:
-    print(f"A valid API key is required: {exc}")
-```
+Call `client.resend_verification_email()` with a valid account API key to send
+a new verification message.
 
 Requires a real account key (`api_key=`, or whatever `register_account()`
 just adopted) — a wallet-only client, or one with an invalid/expired key, gets
@@ -278,17 +192,8 @@ running process. Every 402 challenge also names a card checkout URL
 instead, if neither a wallet nor unattended registration fits.
 
 Without a wallet the SDK does not retry a `402`. It raises
-`HpsiMcpPaymentError`, carrying the challenge so you can settle it with your
-own x402 client if you'd rather:
-
-```python
-from hpsilab_mcp import HpsiMcpPaymentError
-
-try:
-    client.get_monte_carlo("NVDA")
-except HpsiMcpPaymentError as exc:
-    print(exc.price, exc.accepts)
-```
+`HpsiMcpPaymentError`, carrying the challenge so an application can inspect or
+settle it with its own x402 client.
 
 Known facilitator rejections retain their safe protocol meaning. An empty
 wallet reports `Payment rejected: insufficient_funds.` An `invalid_payload`
@@ -306,26 +211,10 @@ about the next one.
 With a wallet, the client signs the challenge and repeats the request for you:
 
 ```python
-from hpsilab_mcp import (
-    HpsiMcpError,
-    HpsiMcpPaymentError,
-    HpsiMcpSettlementUnknownError,
-    HpsiMcpClient,
-    X402Wallet,
-)
+from hpsilab_mcp import HpsiMcpClient, X402Wallet
 
 client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
-
-try:
-    result = client.get_monte_carlo("NVDA")  # no account needed — paid per call
-    print(result)
-except HpsiMcpSettlementUnknownError as exc:
-    # Never retry automatically: the payment may already have settled.
-    print(f"Payment outcome unknown; reconcile call {exc.call_id}.")
-except HpsiMcpPaymentError as exc:
-    print(f"Payment was not completed: {exc}")
-except HpsiMcpError as exc:
-    print(f"Request failed: {exc}")
+print(client.get_monte_carlo("NVDA"))  # no account needed — paid per call
 ```
 
 ### Holding a wallet is not the same as agreeing to spend it
@@ -423,24 +312,9 @@ money may have moved. **Paying again is the one thing that must not happen**,
 because a second attempt signs a new authorization and buys the same call
 twice.
 
-The SDK raises `HpsiMcpSettlementUnknownError` for this, and it is deliberately
-**not** a subclass of `HpsiMcpAPIError`:
-
-```python
-from hpsilab_mcp import HpsiMcpAPIError, HpsiMcpSettlementUnknownError
-
-try:
-    data = client.get_iv_radar("NVDA")
-except HpsiMcpSettlementUnknownError as exc:
-    # Do not retry. Record exc.call_id and reconcile.
-    log.error("payment outcome unknown, call_id=%s", exc.call_id)
-except HpsiMcpAPIError:
-    retry()          # never reached for an unresolved settlement
-```
-
-`except HpsiMcpAPIError: retry()` is the most ordinary line a caller writes,
-and for this one response it is the line that costs money — so the error is
-placed where that handler cannot catch it. It is meant to be loud.
+The SDK raises `HpsiMcpSettlementUnknownError` for this. It is deliberately not
+a subclass of `HpsiMcpAPIError`, preventing a broad API-error retry handler
+from buying the same call twice.
 
 The exception carries `call_id`, `tool` and `settlement_status`. **Keep the
 `call_id`**: it is what reconciliation needs to decide whether the money moved,
@@ -487,7 +361,7 @@ payment for it and `HpsiMcpPaymentError` explains that no offer arrived.
 
 ## Version
 
-Current release: **0.13.14**
+Current release: **0.13.15**
 
 ```python
 import hpsilab_mcp
