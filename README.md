@@ -28,8 +28,8 @@ pip install "hpsilab-mcp[x402]"
 Get a free API key before calling the SDK:
 
 1. Register at **<https://hpsilab.com/register>**.
-2. Open **[Settings → API Keys](https://hpsilab.com/settings)** and copy your
-   `hpsi_...` key.
+2. Open **[Settings → Create key](https://hpsilab.com/settings)** and create
+   your `hpsi_...` key.
 
 Keep the API key private. Replace `YOUR_API_KEY` below with the complete
 `hpsi_...` value:
