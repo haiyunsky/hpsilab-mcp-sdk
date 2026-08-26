@@ -23,6 +23,29 @@ To let the client pay per call instead of registering an account (see
 pip install "hpsilab-mcp[x402]"
 ```
 
+## Get an API Key
+
+Get a free API key before calling the SDK:
+
+1. Register at **<https://hpsilab.com/register>**.
+2. Open **Settings → API Keys** and copy your `hpsi_...` key.
+
+Agents and scripts can register without opening a browser:
+
+```python
+import hpsilab_mcp
+
+try:
+    account = hpsilab_mcp.register(email="you@example.com")
+    api_key = account["api_key"]
+    print(api_key)
+except Exception as e:
+    print(f"HPSILab registration error: {e}")
+```
+
+Keep the API key private. Pass it to `HpsiMcpClient(api_key=api_key)` as shown
+below.
+
 ## Quick Start
 
 Register, receive an API key, and run an analysis immediately:
@@ -48,8 +71,11 @@ API key from **Settings → API Keys**:
 ```python
 from hpsilab_mcp import HpsiMcpClient
 
-client = HpsiMcpClient(api_key="YOUR_API_KEY")
-print(client.get_ai_prediction("NVDA"))
+try:
+    client = HpsiMcpClient(api_key="YOUR_API_KEY")
+    print(client.get_ai_prediction("NVDA"))
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 The emailed verification link unlocks the full Free plan. Calling
@@ -134,9 +160,12 @@ returns an `api_key` that can be passed directly to `HpsiMcpClient`:
 import hpsilab_mcp
 from hpsilab_mcp import HpsiMcpClient
 
-account = hpsilab_mcp.register(email="you@example.com")
-client = HpsiMcpClient(api_key=account["api_key"])
-print(client.get_monte_carlo("NVDA"))
+try:
+    account = hpsilab_mcp.register(email="you@example.com")
+    client = HpsiMcpClient(api_key=account["api_key"])
+    print(client.get_monte_carlo("NVDA"))
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 The account is *also* bound to this caller server-side — so a process that
@@ -213,8 +242,11 @@ With a wallet, the client signs the challenge and repeats the request for you:
 ```python
 from hpsilab_mcp import HpsiMcpClient, X402Wallet
 
-client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
-print(client.get_monte_carlo("NVDA"))  # no account needed — paid per call
+try:
+    client = HpsiMcpClient(wallet=X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
+    print(client.get_monte_carlo("NVDA"))  # no account needed — paid per call
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 ### Holding a wallet is not the same as agreeing to spend it
@@ -225,20 +257,22 @@ exists. The default mode is **`credits_only`**: the SDK never pays.
 ```python
 from hpsilab_mcp import HpsiMcpClient, PaymentPolicy, X402Wallet
 
-client = HpsiMcpClient(
-    wallet=X402Wallet(PRIVATE_KEY),    # no api_key — see the note below
-    payment_policy=PaymentPolicy(
-        mode="x402_fallback",          # the opt-in; default "credits_only"
-        max_payment_per_call="0.20",
-        max_payment_per_session="2.00",
-        max_payment_per_day="10.00",
-        allowed_payment_assets={"USDC"},
-        allowed_networks={"base"},
-        x402_allowed_tools={"get_monte_carlo", "get_pretrade_risk_scan"},
-    ),
-)
-
-client.payment_spend_summary()   # what's been spent, and against which ceilings
+try:
+    client = HpsiMcpClient(
+        wallet=X402Wallet(PRIVATE_KEY),    # no api_key — see the note below
+        payment_policy=PaymentPolicy(
+            mode="x402_fallback",          # the opt-in; default "credits_only"
+            max_payment_per_call="0.20",
+            max_payment_per_session="2.00",
+            max_payment_per_day="10.00",
+            allowed_payment_assets={"USDC"},
+            allowed_networks={"base"},
+            x402_allowed_tools={"get_monte_carlo", "get_pretrade_risk_scan"},
+        ),
+    )
+    print(client.payment_spend_summary())
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 > **A wallet does not top up an account.** Adding `api_key=` to the client
@@ -323,11 +357,10 @@ and the API's ledger records the same id.
 Afterwards the client stops paying, and says so:
 
 ```python
-client.payment_spend_summary()
-# {'session_spent_usd': '0.05', ...,
-#  'x402_disabled_reason': 'a payment was sent and the API could not confirm '
-#                          'whether it settled',
-#  'unresolved_settlements': {'call_abc123': 'get_iv_radar'}}
+try:
+    print(client.payment_spend_summary())
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 Credits-funded calls keep working — nothing about the API key failed. Once
@@ -338,9 +371,11 @@ resuming payments still needs the evidence.
 To recover an existing Client after a `401` or unresolved `402`:
 
 ```python
-client.set_api_key("NEW_API_KEY")
-# or
-client.set_wallet(X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
+try:
+    client.set_api_key("NEW_API_KEY")
+    # or: client.set_wallet(X402Wallet(PRIVATE_KEY, max_price_usdc=0.20))
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 Pay-per-call is an allowlist. A tool that is not on it answers `401`/`402`
@@ -366,7 +401,10 @@ Current release: **0.13.15**
 ```python
 import hpsilab_mcp
 
-print(hpsilab_mcp.__version__)
+try:
+    print(hpsilab_mcp.__version__)
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 ## Request tracking
