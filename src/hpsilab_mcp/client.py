@@ -31,7 +31,7 @@ from .errors import (
     safe_public_url,
 )
 from .payments import X402Wallet, wallet_from_env
-from .mcp_result import full_tool_result
+from .mcp_result import McpToolResult, full_tool_result, sdk_dependency_metadata
 from .policy import (
     CREDITS_ONLY,
     X402_FALLBACK,
@@ -449,10 +449,21 @@ class HpsiMcpClient:
     ) -> None:
         self.close()
 
-    def get_ai_prediction(self, symbol: str) -> Any:
-        return self._get(
+    def get_ai_prediction(
+        self, symbol: str, *, include_metadata: bool = False
+    ) -> Any:
+        cleaned_symbol = self._clean_symbol(symbol)
+        result = self._get(
             f"/api/ai_prediction/{self._path_symbol(symbol)}",
             tool_name="get_ai_prediction",
+        )
+        if not include_metadata:
+            return result
+        return McpToolResult(
+            data=result,
+            metadata=sdk_dependency_metadata(
+                "get_ai_prediction", {"symbol": cleaned_symbol}, result
+            ),
         )
 
     def analyze_stock(self, symbol: str, refresh: bool = False) -> Any:

@@ -1,8 +1,33 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError, McpToolResult
+
+
+def test_rest_prediction_can_include_sdk_metadata():
+    def handler(request):
+        assert request.url.path == "/api/ai_prediction/TSLA"
+        return httpx.Response(
+            200,
+            json={"symbol": "TSLA", "signal": "bullish", "as_of": "2026-08-25"},
+        )
+
+    client = HpsiMcpClient(
+        api_key="hpsi_test",
+        transport=httpx.MockTransport(handler),
+    )
+    result = client.get_ai_prediction("TSLA", include_metadata=True)
+
+    assert isinstance(result, McpToolResult)
+    assert result.data["symbol"] == "TSLA"
+    assert result.metadata.result_id.startswith("res_")
+    assert result.metadata.source_ids
+    assert result.metadata.upstream_ids
+    assert result.metadata.derived_from == []
+    assert result.metadata.timestamp == "2026-08-25"
+    client.close()
 
 def test_sdk_generates_stable_metadata_for_fixed_nvda_result():
     raw_result = {

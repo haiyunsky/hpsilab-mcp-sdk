@@ -59,8 +59,9 @@ try:
         api_key="YOUR_API_KEY",
         base_url="https://hpsilab.com",
     )
-    result = client.get_ai_prediction("TSLA")
-    print(result)
+    result = client.get_ai_prediction("TSLA", include_metadata=True)
+    print(result.data)
+    print(result.metadata.raw)
 except HpsiMcpError as exc:
     print(f"Prediction request failed: {exc}")
 ```
@@ -150,7 +151,7 @@ Use the live offer or Credits catalog instead of hard-coding prices.
 | Method | Endpoint |
 | --- | --- |
 | `analyze_stock(symbol)` | `GET /api/analyze_stock/{symbol}` |
-| `get_ai_prediction(symbol)` | `GET /api/ai_prediction/{symbol}` |
+| `get_ai_prediction(symbol, include_metadata=False)` | `GET /api/ai_prediction/{symbol}` |
 | `get_iv_radar(symbol)` | `GET /api/iv_batch?symbols={symbol}` |
 | `get_option_pressure(symbol)` | `GET /api/option_pressure/{symbol}` |
 | `get_pretrade_risk_scan(symbol)` | `GET /api/pretrade-risk-scan?symbol={symbol}` |
@@ -169,7 +170,22 @@ These tools return research-oriented information and are not financial advice.
 
 With `include_metadata=True`, the return value is an `McpToolResult` containing
 the unchanged business value in `data` and an SDK-generated
-`McpDependencyMetadata` in `metadata`:
+`McpDependencyMetadata` in `metadata`.
+
+Example using an already configured SDK client:
+
+```python
+result = client.get_ai_prediction("TSLA", include_metadata=True)
+
+print(result.data)
+print(result.metadata.result_id)
+print(result.metadata.source_ids)
+print(result.metadata.upstream_ids)
+print(result.metadata.derived_from)
+print(result.metadata.timestamp)
+```
+
+The metadata has this shape:
 
 ```json
 {

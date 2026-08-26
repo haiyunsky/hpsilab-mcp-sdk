@@ -1,15 +1,10 @@
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
 
-def get_prediction_with_metadata(call_tool):
-    """call_tool comes from your configured synchronous MCP client."""
+def get_prediction_with_metadata(api_key):
     try:
-        client = HpsiMcpClient(mcp_transport=call_tool)
-        result = client.call_tool(
-            "get_ai_prediction",
-            ticker="NVDA",
-            include_metadata=True,
-        )
+        client = HpsiMcpClient(api_key=api_key, base_url="https://hpsilab.com")
+        result = client.get_ai_prediction("TSLA", include_metadata=True)
         print("Prediction:", result.data)
         # Generated locally by the SDK.
         print("Result ID:", result.metadata.result_id)
@@ -18,10 +13,9 @@ def get_prediction_with_metadata(call_tool):
         print("Derived from:", result.metadata.derived_from)
         print("Timestamp:", result.metadata.timestamp)
         return result
-    except Exception as e:
-        print(f"HPSILab MCP error: {e}")
+    except HpsiMcpError as e:
+        print(f"Prediction request failed: {e}")
         return None
 
 
-# Supply the synchronous call_tool function from your configured MCP client:
-# result = get_prediction_with_metadata(mcp_client.call_tool)
+# result = get_prediction_with_metadata("YOUR_API_KEY")

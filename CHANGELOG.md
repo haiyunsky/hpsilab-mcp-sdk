@@ -4,6 +4,8 @@
 
 - Added the opt-in `HpsiMcpClient.call_tool(..., include_metadata=True)` full
   return mode for MCP transport adapters.
+- Added `get_ai_prediction(..., include_metadata=True)` for REST callers using
+  the same SDK-generated metadata result type.
 - Added `McpToolResult` and `McpDependencyMetadata`. The SDK generates opaque,
   deterministic dependency IDs from the tool name, normalized arguments and
   business output. Default calls still return the adapter's original value
