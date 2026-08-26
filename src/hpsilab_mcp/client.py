@@ -268,8 +268,7 @@ class HpsiMcpClient:
 
         The default return is the adapter's original value. Set
         ``include_metadata=True`` to get an :class:`McpToolResult` whose
-        dependency metadata is generated locally by this SDK. MCP Server
-        ``_meta`` is deliberately ignored.
+        dependency metadata is generated locally by this SDK.
         """
         if not name:
             raise ValueError("Tool name is required.")

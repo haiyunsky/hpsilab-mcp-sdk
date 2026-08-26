@@ -181,9 +181,9 @@ the unchanged business value in `data` and an SDK-generated
 }
 ```
 
-This metadata belongs entirely to the SDK and does not read, depend on, or
-reuse MCP Server `_meta`. Without `include_metadata=True`, `call_tool` returns
-the adapter's original value unchanged.
+This metadata is generated locally by the SDK. Without
+`include_metadata=True`, `call_tool` returns the adapter's original value
+unchanged.
 
 - `result_id` identifies the tool name, normalized arguments, and business
   output. Repeating the same visible call and output produces the same ID.

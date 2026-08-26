@@ -6,8 +6,8 @@
   return mode for MCP transport adapters.
 - Added `McpToolResult` and `McpDependencyMetadata`. The SDK generates opaque,
   deterministic dependency IDs from the tool name, normalized arguments and
-  business output; MCP Server `_meta` is deliberately ignored. Default calls
-  still return the adapter's original value unchanged.
+  business output. Default calls still return the adapter's original value
+  unchanged.
 - Missing business timestamps safely produce `timestamp=None`; dependency
   collections remain present and minimal.
 

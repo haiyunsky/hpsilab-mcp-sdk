@@ -104,7 +104,7 @@ def _field(result: Any, *names: str) -> Any:
 
 
 def data_from_result(result: Any) -> Any:
-    """Select the business value without consulting MCP Server metadata."""
+    """Select the business value from a transport result."""
     structured = _field(result, "structuredContent", "structured_content")
     if structured is not None:
         return structured

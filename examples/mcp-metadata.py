@@ -11,7 +11,7 @@ def get_prediction_with_metadata(call_tool):
             include_metadata=True,
         )
         print("Prediction:", result.data)
-        # Generated locally by the SDK; MCP Server _meta is not consulted.
+        # Generated locally by the SDK.
         print("Result ID:", result.metadata.result_id)
         print("Sources:", result.metadata.source_ids)
         print("Upstream:", result.metadata.upstream_ids)
