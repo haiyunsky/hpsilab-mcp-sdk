@@ -16,8 +16,8 @@
 pip install hpsilab-mcp
 ```
 
-To let the client pay per call instead of registering an account (see
-[Paying without an account](#paying-without-an-account)):
+To let the client pay per call with x402 (see
+[Paying with x402 - paid per call](#paying-with-x402---paid-per-call)):
 
 ```bash
 pip install "hpsilab-mcp[x402]"
@@ -112,7 +112,7 @@ include `HpsiMcpConfigError` for authentication,
 `HpsiMcpInsufficientCreditsError` for an empty balance, and
 `HpsiMcpRateLimitError` for rate limits.
 
-## Paying without an account
+## Paying with x402 - paid per call
 
 As an alternative to an API key, install `hpsilab-mcp[x402]` and provide an
 `X402Wallet`. The SDK can then pay supported tool calls in USDC on Base after

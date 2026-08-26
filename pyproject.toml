@@ -61,7 +61,7 @@ Homepage = "https://hpsilab.com"
 Repository = "https://github.com/haiyunsky/hpsilab-mcp-sdk"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
