@@ -416,41 +416,9 @@ idempotent.
 
 ## MCP Transport
 
-All official MCP tools have REST SDK coverage. If your application already has
-a synchronous MCP client, pass its `call_tool(name, arguments)` function to
-`mcp_transport`. The SDK can then return the tool data and the server's original
-dependency metadata together:
-
-```python
-from hpsilab_mcp import HpsiMcpClient
-
-
-def get_prediction_with_metadata(call_tool):
-    """call_tool comes from your configured synchronous MCP client."""
-    try:
-        client = HpsiMcpClient(mcp_transport=call_tool)
-        result = client.call_tool(
-            "get_ai_prediction",
-            ticker="NVDA",
-            include_metadata=True,
-        )
-
-        print("Prediction:", result.data)
-        if result.metadata is not None:
-            print("Result ID:", result.metadata.result_id)
-            print("Sources:", result.metadata.source_ids)
-            print("Upstream:", result.metadata.upstream_ids)
-            print("Derived from:", result.metadata.derived_from)
-            print("Timestamp:", result.metadata.timestamp)
-        return result
-    except Exception as e:
-        print(f"HPSILab MCP error: {e}")
-        return None
-
-
-# In your MCP setup, call:
-# result = get_prediction_with_metadata(mcp_client.call_tool)
-```
+All official MCP tools have REST SDK coverage. Applications that already have
+a configured synchronous MCP transport can pass a
+`call_tool(name, arguments)` callback through `mcp_transport`.
 
 With `include_metadata=False` (the default), `call_tool` returns the transport
 adapter's original value unchanged. With it enabled, `result.metadata` is a
@@ -460,14 +428,10 @@ generates or infers these identifiers. Missing metadata returns `None`; missing
 individual list fields return an empty list. The complete unmodified mapping
 is available as `result.metadata.raw`.
 
-`mcp_client` in the final commented line means the MCP client your application
-has already configured; it is not created by this SDK. The callback must be
-synchronous and return the raw `CallToolResult` or its decoded JSON form.
+The callback must return the raw `CallToolResult` or its decoded JSON form.
 Transport setup, sessions, streaming, and tool discovery remain the
-responsibility of that MCP client library. See the
-[MCP server docs](https://hpsilab.com/developer/v2) for setup and
-[`examples/mcp-metadata.py`](examples/mcp-metadata.py) for the standalone
-helper.
+responsibility of the MCP client library. See the
+[MCP server docs](https://hpsilab.com/developer/v2) for connection setup.
 
 ## Scope
 
