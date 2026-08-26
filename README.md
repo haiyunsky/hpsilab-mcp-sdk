@@ -164,25 +164,6 @@ Use the live offer or Credits catalog instead of hard-coding prices.
 The two `generate_*` methods create or refresh hosted artifacts and are not
 guaranteed to be idempotent.
 
-## MCP Transport
-
-All official MCP tools have REST SDK coverage. Applications that already have
-a configured synchronous MCP transport can pass a
-`call_tool(name, arguments)` callback through `mcp_transport`.
-
-With `include_metadata=False` (the default), `call_tool` returns the transport
-adapter's original value unchanged. With it enabled, `result.metadata` is a
-read-only view of the MCP result's `_meta` and exposes `result_id`,
-`source_ids`, `upstream_ids`, `derived_from`, and `timestamp`. The SDK never
-generates or infers these identifiers. Missing metadata returns `None`; missing
-individual list fields return an empty list. The complete unmodified mapping
-is available as `result.metadata.raw`.
-
-The callback must return the raw `CallToolResult` or its decoded JSON form.
-Transport setup, sessions, streaming, and tool discovery remain the
-responsibility of the MCP client library. See the
-[MCP server docs](https://hpsilab.com/developer/v2) for connection setup.
-
 These tools return research-oriented information and are not financial advice.
 
 ## Links
