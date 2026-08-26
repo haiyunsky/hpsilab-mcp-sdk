@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.13.15 - 2026-08-26
+## v0.13.16 - 2026-08-26
 
 - Added the opt-in `HpsiMcpClient.call_tool(..., include_metadata=True)` full
   return mode for MCP transport adapters.
