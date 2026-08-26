@@ -2,7 +2,9 @@
 
 `hpsilab-mcp` is the official Python SDK for the hosted hpsilab.com REST API — quantitative finance and options analytics (IV surface, Monte Carlo simulation, AI predictions, pre-trade risk scans, and more).
 
-> **Note:** This package wraps REST endpoints only. It does not implement MCP transport — see [MCP Transport](#mcp-transport) below if you need that.
+> **Note:** This package wraps REST endpoints and can decode results supplied
+> by an MCP transport adapter. It does not implement MCP transport itself — see
+> [MCP Transport](#mcp-transport) below.
 
 ## Requirements
 
@@ -542,11 +544,43 @@ idempotent.
 
 ## MCP Transport
 
-All official MCP tools have REST SDK coverage. Use an MCP-compatible client (e.g. Claude, or any MCP host) when you specifically need MCP transport, tool discovery, or assistant-native tool calls — see the [MCP server docs](https://hpsilab.com/developer/v2) for setup.
+All official MCP tools have REST SDK coverage. The optional `mcp_transport`
+adapter lets the SDK consume an MCP client's raw `CallToolResult` without
+adding an MCP runtime dependency:
+
+```python
+from hpsilab_mcp import HpsiMcpClient
+
+client = HpsiMcpClient(mcp_transport=mcp_session.call_tool)
+result = client.call_tool(
+    "get_ai_prediction",
+    ticker="NVDA",
+    include_metadata=True,
+)
+
+print(result.data)
+print(result.metadata.result_id if result.metadata else None)
+```
+
+With `include_metadata=False` (the default), `call_tool` returns the transport
+adapter's original value unchanged. With it enabled, `result.metadata` is a
+read-only view of the MCP result's `_meta` and exposes `result_id`,
+`source_ids`, `upstream_ids`, `derived_from`, and `timestamp`. The SDK never
+generates or infers these identifiers. Missing metadata returns `None`; missing
+individual list fields return an empty list. The complete unmodified mapping
+is available as `result.metadata.raw`.
+
+The adapter must be synchronous and accept `(tool_name, arguments)`. Transport
+setup, sessions, streaming, and tool discovery remain the responsibility of
+the MCP client library. See the [MCP server docs](https://hpsilab.com/developer/v2)
+for setup and [`examples/mcp-metadata.py`](examples/mcp-metadata.py) for a full
+example.
 
 ## Scope
 
-This package is a REST API wrapper only. It does not implement MCP transport, SSE, streaming, tool discovery, Claude integration, or proprietary finance logic.
+This package provides REST methods plus an adapter for decoded MCP tool
+results. It does not itself implement MCP transport, SSE, streaming, tool
+discovery, Claude integration, or proprietary finance logic.
 
 These tools return research-oriented information. **They are not financial advice.**
 

@@ -8,7 +8,7 @@ import warnings
 from decimal import Decimal, InvalidOperation
 from threading import RLock
 from types import TracebackType
-from typing import Any, Mapping, Optional, Sequence, Type
+from typing import Any, Callable, Mapping, Optional, Sequence, Type
 from urllib.parse import quote
 
 import httpx
@@ -31,6 +31,7 @@ from .errors import (
     safe_public_url,
 )
 from .payments import X402Wallet, wallet_from_env
+from .mcp_result import full_tool_result
 from .policy import (
     CREDITS_ONLY,
     X402_FALLBACK,
@@ -164,6 +165,7 @@ class HpsiMcpClient:
         payment_policy: Optional[PaymentPolicy] = None,
         insufficient_credits_ttl_seconds: float = DEFAULT_INSUFFICIENT_CREDITS_TTL_SECONDS,
         anonymous_credential: Optional[str] = None,
+        mcp_transport: Optional[Callable[[str, Mapping[str, Any]], Any]] = None,
     ) -> None:
         if (
             isinstance(insufficient_credits_ttl_seconds, bool)
@@ -201,6 +203,7 @@ class HpsiMcpClient:
 
         self._api_key = api_key
         self._anonymous_credential = anonymous_credential
+        self._mcp_transport = mcp_transport
         self._wallet = resolved_wallet
         self._payment_policy = self._initial_payment_policy(
             payment_policy,
@@ -252,6 +255,35 @@ class HpsiMcpClient:
 
     def close(self) -> None:
         self._client.close()
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: Optional[Mapping[str, Any]] = None,
+        *,
+        include_metadata: bool = False,
+        **tool_arguments: Any,
+    ) -> Any:
+        """Call an MCP tool through the optional transport adapter.
+
+        The default return is the adapter's original value. Set
+        ``include_metadata=True`` to get an :class:`McpToolResult` whose
+        metadata is read directly from MCP ``CallToolResult._meta``.
+        """
+        if not name:
+            raise ValueError("Tool name is required.")
+        if self._mcp_transport is None:
+            raise HpsiMcpConfigError(
+                "call_tool requires an mcp_transport adapter. REST methods remain available without one."
+            )
+        merged = dict(arguments or {})
+        duplicate = merged.keys() & tool_arguments.keys()
+        if duplicate:
+            names = ", ".join(sorted(duplicate))
+            raise ValueError(f"Duplicate MCP tool arguments: {names}")
+        merged.update(tool_arguments)
+        raw_result = self._mcp_transport(name, merged)
+        return full_tool_result(raw_result) if include_metadata else raw_result
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostic safety
         api_key_state = "configured" if self._api_key else "not-configured"

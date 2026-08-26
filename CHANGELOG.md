@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.13.15 - 2026-08-26
+
+- Added the opt-in `HpsiMcpClient.call_tool(..., include_metadata=True)` full
+  return mode for MCP transport adapters.
+- Added `McpToolResult` and `McpDependencyMetadata`, exposing dependency
+  metadata directly from `CallToolResult._meta` without generating IDs in the
+  SDK. Default calls still return the adapter's original value unchanged.
+- Missing metadata safely returns `None`, with empty collections for absent
+  dependency-list fields.
+
 ## v0.13.14 - 2026-08-23
 
 - Added `upgrade_available` and `upgrade_url` to
