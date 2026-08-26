@@ -32,15 +32,19 @@ hours** Anonymous Trial. The client automatically adopts the returned
 calls.
 
 ```python
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
-client = HpsiMcpClient()
-result = client.analyze_stock("NVDA")
+try:
+    client = HpsiMcpClient()
+    result = client.analyze_stock("NVDA")
+    print(result)
 
-# Persist this value if the balance must survive a new client/process.
-saved_credential = client.anonymous_credential
-
-restored = HpsiMcpClient(anonymous_credential=saved_credential)
+    # Persist this value if the balance must survive a new client/process.
+    saved_credential = client.anonymous_credential
+    if saved_credential is not None:
+        restored = HpsiMcpClient(anonymous_credential=saved_credential)
+except HpsiMcpError as exc:
+    print(f"HPSILab request failed: {exc}")
 ```
 
 Register or provide an API key when the Anonymous Credits are exhausted. Two
@@ -549,17 +553,20 @@ adapter lets the SDK consume an MCP client's raw `CallToolResult` without
 adding an MCP runtime dependency:
 
 ```python
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
-client = HpsiMcpClient(mcp_transport=mcp_session.call_tool)
-result = client.call_tool(
-    "get_ai_prediction",
-    ticker="NVDA",
-    include_metadata=True,
-)
+try:
+    client = HpsiMcpClient(mcp_transport=mcp_session.call_tool)
+    result = client.call_tool(
+        "get_ai_prediction",
+        ticker="NVDA",
+        include_metadata=True,
+    )
 
-print(result.data)
-print(result.metadata.result_id if result.metadata else None)
+    print(result.data)
+    print(result.metadata.result_id if result.metadata else None)
+except HpsiMcpError as exc:
+    print(f"HPSILab MCP request failed: {exc}")
 ```
 
 With `include_metadata=False` (the default), `call_tool` returns the transport
