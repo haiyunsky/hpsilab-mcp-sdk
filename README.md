@@ -30,57 +30,42 @@ Get a free API key before calling the SDK:
 1. Register at **<https://hpsilab.com/register>**.
 2. Open **Settings → API Keys** and copy your `hpsi_...` key.
 
-Agents and scripts can register without opening a browser:
+Keep the API key private. Replace `YOUR_API_KEY` below with the complete
+`hpsi_...` value:
 
 ```python
-import hpsilab_mcp
+from hpsilab_mcp import HpsiMcpClient
 
 try:
-    account = hpsilab_mcp.register(email="you@example.com")
-    api_key = account["api_key"]
-    print(api_key)
+    client = HpsiMcpClient(api_key="hpsi_your_api_key_here")
+    print(client.analyze_stock("NVDA"))
 except Exception as e:
-    print(f"HPSILab registration error: {e}")
+    print(f"HPSILab error: {e}")
 ```
 
-Keep the API key private. Pass it to `HpsiMcpClient(api_key=api_key)` as shown
-below.
+Pass only the key value. Do not add a `Bearer ` prefix—the SDK adds the
+`Authorization: Bearer <API_KEY>` header automatically.
 
 ## Quick Start
 
-Register, receive an API key, and run an analysis immediately:
+Use the API key from the previous section. Replace `YOUR_API_KEY` with your
+actual `hpsi_...` key:
 
 ```python
-import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpClient
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
 try:
-    account = hpsilab_mcp.register(email="you@example.com")
-    api_key = account["api_key"]
-
-    client = HpsiMcpClient(api_key=api_key)
-    result = client.analyze_stock("NVDA")
+    client = HpsiMcpClient(
+        api_key="YOUR_API_KEY",
+        base_url="https://hpsilab.com",
+    )
+    result = client.get_ai_prediction("TSLA")
     print(result)
-except Exception as e:
-    print(f"HPSILab error: {e}")
+except HpsiMcpError as exc:
+    print(f"Prediction request failed: {exc}")
 ```
 
-You can also create the account at <https://hpsilab.com/register>, then copy an
-API key from **Settings → API Keys**:
-
-```python
-from hpsilab_mcp import HpsiMcpClient
-
-try:
-    client = HpsiMcpClient(api_key="YOUR_API_KEY")
-    print(client.get_ai_prediction("NVDA"))
-except Exception as e:
-    print(f"HPSILab error: {e}")
-```
-
-The emailed verification link unlocks the full Free plan. Calling
-`hpsilab_mcp.register()` again with the same email returns the existing account
-and a fresh key instead of creating a duplicate.
+Complete account verification when prompted to unlock the full Free plan.
 
 ### Anonymous Trial
 
@@ -151,22 +136,10 @@ request. Recover with `client.set_api_key(...)`, `client.set_wallet(...)`, or
 a new Client. A `403` remains `HpsiMcpAuthError`; a `429` remains
 `HpsiMcpRateLimitError` and neither opens this circuit.
 
-## Registering your own account (for agents)
+## Managing Your API Key
 
-No client instance is needed. Registration requires an email address and
-returns an `api_key` that can be passed directly to `HpsiMcpClient`:
-
-```python
-import hpsilab_mcp
-from hpsilab_mcp import HpsiMcpClient
-
-try:
-    account = hpsilab_mcp.register(email="you@example.com")
-    client = HpsiMcpClient(api_key=account["api_key"])
-    print(client.get_monte_carlo("NVDA"))
-except Exception as e:
-    print(f"HPSILab error: {e}")
-```
+Create an account at <https://hpsilab.com/register>, then create or copy an API
+key from **Settings → API Keys**. Pass that key to `HpsiMcpClient(api_key=...)`.
 
 The account is *also* bound to this caller server-side — so a process that
 cannot change its own `Authorization` header (an MCP connection, for
@@ -177,16 +150,8 @@ until the emailed link is confirmed; confirming it unlocks the full Free
 plan. Use a real address — one nobody reads leaves the account at that lower
 allowance forever.
 
-Calling `hpsilab_mcp.register()` again with the same email returns the same
-account and a fresh key rather than creating a second one, so it is safe to
-call when you have lost your key. An address that already belongs to a
-different account raises `HpsiMcpAPIError` with status `409`.
-
-Already have a client constructed (typically wallet-only, via `wallet=`) and
-want it to also have an account? `HpsiMcpClient.register_account(email)` is
-the same registration, as an instance method — it switches the client over to
-the new key automatically. Pass `adopt_key=False` to get the response without
-switching, e.g. to hand the key to another process instead.
+If a key is lost or rotated, create a replacement from Settings and update the
+client with `client.set_api_key("NEW_API_KEY")`.
 
 ### Lost the verification email?
 
@@ -197,8 +162,8 @@ arrived or the link expired, request a new one instead of registering again:
 Call `client.resend_verification_email()` with a valid account API key to send
 a new verification message.
 
-Requires a real account key (`api_key=`, or whatever `register_account()`
-just adopted) — a wallet-only client, or one with an invalid/expired key, gets
+Requires a real account key passed with `api_key=`. A wallet-only client, or
+one with an invalid/expired key, gets
 `HpsiMcpConfigError` and opens the local authentication circuit: there's no
 more fingerprint-based fallback for a
 header-less caller (API key is mandatory now, and fingerprint binding was
@@ -213,10 +178,9 @@ client — the API answers **HTTP 402** with an [x402](https://x402.org)
 payment challenge instead of refusing outright, so an agent can pay for the
 call in USDC on Base and keep working without ever registering.
 
-**You do not need a wallet either**, if you'd rather register instead — see
-[Registering your own account](#registering-your-own-account-for-agents)
-above; it needs no wallet and no browser, and resolves this within the
-running process. Every 402 challenge also names a card checkout URL
+**You do not need a wallet either**, if you'd rather create an account and API
+key instead—see [Get an API Key](#get-an-api-key) above. Every 402 challenge
+also names a card checkout URL
 (`https://hpsilab.com/pricing?anon=...`) for a human to pay with a card
 instead, if neither a wallet nor unattended registration fits.
 
