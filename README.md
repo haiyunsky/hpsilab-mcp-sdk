@@ -32,7 +32,7 @@ hours** Anonymous Trial. The client automatically adopts the returned
 calls.
 
 ```python
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
+from hpsilab_mcp import HpsiMcpClient
 
 try:
     client = HpsiMcpClient()
@@ -41,10 +41,12 @@ try:
 
     # Persist this value if the balance must survive a new client/process.
     saved_credential = client.anonymous_credential
-    if saved_credential is not None:
-        restored = HpsiMcpClient(anonymous_credential=saved_credential)
-except HpsiMcpError as exc:
-    print(f"HPSILab request failed: {exc}")
+
+    restored = HpsiMcpClient(
+        anonymous_credential=saved_credential
+    )
+except Exception as e:
+    print(f"HPSILab error: {e}")
 ```
 
 Register or provide an API key when the Anonymous Credits are exhausted. Two
@@ -555,18 +557,27 @@ adding an MCP runtime dependency:
 ```python
 from hpsilab_mcp import HpsiMcpClient, HpsiMcpError
 
-try:
-    client = HpsiMcpClient(mcp_transport=mcp_session.call_tool)
-    result = client.call_tool(
-        "get_ai_prediction",
-        ticker="NVDA",
-        include_metadata=True,
-    )
 
-    print(result.data)
-    print(result.metadata.result_id if result.metadata else None)
-except HpsiMcpError as exc:
-    print(f"HPSILab MCP request failed: {exc}")
+def analyze_with_metadata(mcp_call_tool):
+    """mcp_call_tool must accept (tool_name, arguments)."""
+    try:
+        client = HpsiMcpClient(mcp_transport=mcp_call_tool)
+        result = client.call_tool(
+            "get_ai_prediction",
+            ticker="NVDA",
+            include_metadata=True,
+        )
+
+        print(result.data)
+        print(result.metadata.result_id if result.metadata else None)
+        return result
+    except HpsiMcpError as exc:
+        print(f"HPSILab MCP request failed: {exc}")
+        return None
+
+
+# Supply the synchronous call_tool function from your configured MCP client:
+# result = analyze_with_metadata(your_mcp_client.call_tool)
 ```
 
 With `include_metadata=False` (the default), `call_tool` returns the transport
