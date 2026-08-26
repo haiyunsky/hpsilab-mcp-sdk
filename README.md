@@ -155,16 +155,6 @@ balance at `GET /api/credits/balance` — both free to call.
 Running out raises its own error, deliberately **not** a rate-limit error:
 waiting fixes a rate limit and never refills a balance.
 
-```python
-from hpsilab_mcp import HpsiMcpInsufficientCreditsError
-
-try:
-    client.get_monte_carlo("NVDA")
-except HpsiMcpInsufficientCreditsError as exc:
-    print(exc.credits_required, exc.credits_remaining)  # 30 12
-    print(exc.upgrade_url)                              # where to add Credits
-```
-
 Credits and rate limits are separate meters: Credits decide *whether* you may
 spend compute, RPM and concurrency decide *how fast*. A Credits refusal is an
 HTTP 402 with `error: "insufficient_credits"`, never a 429. After the first
