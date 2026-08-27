@@ -1,5 +1,39 @@
 # Upgrading hpsilab-mcp
 
+## v0.14.0: the free allowance is no longer a payment error
+
+Affects anyone calling without an API key, and any account whose email is not
+yet verified.
+
+The API answers HTTP 402 with `error: "anonymous_allowance_exhausted"` when the
+free evaluation allowance for unidentified callers is spent. Until now this SDK
+did not recognise the code and raised `HpsiMcpPaymentError` for it, with
+`accepts` and `price` both `None` — a message telling a caller who owes nothing
+to configure a wallet. It now raises `HpsiMcpAllowanceExhaustedError`.
+
+```python
+from hpsilab_mcp import HpsiMcpAllowanceExhaustedError
+
+try:
+    client.get_monte_carlo("NVDA")
+except HpsiMcpAllowanceExhaustedError as exc:
+    # Free and immediate: no password, no wallet, no web form. On a client that
+    # already exists, this also binds the account to the caller server-side.
+    client.register_account(email="you@example.com")
+```
+
+`except HpsiMcpPaymentError` no longer catches this case. That is the breaking
+part, and it is the point: paying does not lift this ceiling, so a handler that
+paid was never going to succeed. Keep catching `HpsiMcpPaymentError` for real
+x402 offers, which are unchanged.
+
+The exception carries `calls_used`, `calls_allowed`, `calls_allowed_next`,
+`window_days`, and `next_actions` — the API's own remedies, cheapest first.
+Prefer acting on `next_actions` over parsing the message: for a caller with no
+account its first entry is `register_account`, and for an account whose email
+is unverified it is `verify_email` instead, which is a distinction this client
+does not have to make itself.
+
 ## v0.13.14: structured rate-limit upgrade guidance
 
 `HpsiMcpRateLimitError` now promotes the HTTP 429 fields

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.14.0 - 2026-08-28
+
+- **Breaking.** A 402 carrying `error: "anonymous_allowance_exhausted"` now
+  raises the new `HpsiMcpAllowanceExhaustedError` instead of
+  `HpsiMcpPaymentError`. Code catching the latter to handle this case no longer
+  catches it — though what it was catching told the caller to pay for a ceiling
+  no payment lifts, so there was nothing correct to write against it.
+- Added `HpsiMcpAllowanceExhaustedError`, a sibling of the payment and Credits
+  errors rather than a subclass: all three arrive on HTTP 402 and need opposite
+  responses. It exposes `calls_used`, `calls_allowed`, `calls_allowed_next`,
+  `window_days`, `next_actions`, `register_url` and `verify_email_url`. For an
+  unregistered caller the first entry of `next_actions` is a `register_account`
+  call taking only an email — no browser, no human step.
+- The API added this refusal on 2026-08-27 and this client did not know it:
+  `_is_insufficient_credits` keys on `insufficient_credits` alone, so the
+  refusal fell through to the payment branch and arrived with `accepts` and
+  `price` both `None`.
+- `pytest` now resolves `hpsilab_mcp` from `src/`. Without configuration it
+  imported whatever was installed in site-packages, so the suite reported 202
+  passed against the published 0.13.16 while the working tree went untested.
+- README trimmed to install-and-use: the error section names one class
+  (`HpsiMcpError`) instead of three, and "Unresolved settlements" moved to
+  `docs/api.md`, next to the exception it describes.
+
 ## v0.13.16 - 2026-08-26
 
 - Added the opt-in `HpsiMcpClient.call_tool(..., include_metadata=True)` full

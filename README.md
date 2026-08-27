@@ -130,8 +130,15 @@ except Exception as e:
 ```
 
 Use `PaymentPolicy` to restrict per-call/session spending, assets, networks,
-and payable tools. A wallet does not add Credits to an API-key account; add
-Credits at <https://hpsilab.com/pricing> instead.
+and payable tools.
+
+**A wallet does not top up an account.** Adding one to a client that has an
+`api_key` gives it no pay-per-call fallback — the wallet would simply never be
+used, because the API does not offer x402 to a caller it can identify. If you
+have a key and run out of Credits, add Credits at
+<https://hpsilab.com/pricing>. A wallet is worth configuring in exactly one
+situation: a client with **no** `api_key`, paying its own way without an
+account.
 
 Payments are never made before the server presents an offer. Signing happens
 locally, and the private key never leaves your process.
