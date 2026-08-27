@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from hpsilab_mcp import (
+    HpsiMcpAllowanceExhaustedError,
     HpsiMcpAuthError,
     HpsiMcpClient,
     HpsiMcpConfigError,
@@ -37,6 +38,7 @@ FIXTURES_PATH = (
 EXCEPTION_TO_KIND = {
     HpsiMcpConfigError: "unauthorized",
     HpsiMcpInsufficientCreditsError: "insufficient_credits",
+    HpsiMcpAllowanceExhaustedError: "allowance_exhausted",
     HpsiMcpPaymentError: "payment_challenge",
     HpsiMcpAuthError: "forbidden",
     HpsiMcpRateLimitError: "rate_limited",

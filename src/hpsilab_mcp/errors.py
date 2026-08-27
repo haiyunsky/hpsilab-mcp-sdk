@@ -204,11 +204,17 @@ class HpsiMcpAuthError(HpsiMcpAPIError):
 
 
 class HpsiMcpPaymentError(HpsiMcpAPIError):
-    """Raised on HTTP 402 — the call is available, but it has to be paid for.
+    """Raised on HTTP 402 — usually because the call has to be paid for.
 
     The API answers 402 when an anonymous caller has used up the free quota for
     a tool (or asks for a Pro tool, which has no anonymous allowance). The
     x402 challenge is attached so a caller can pay without re-parsing the body:
+
+    **Not every 402 is payable**, so not every 402 raises this. Since
+    2026-08-27 the API also answers 402 with
+    ``error: "anonymous_allowance_exhausted"``, a free-evaluation ceiling whose
+    remedy is identifying yourself rather than paying; that one raises
+    :class:`HpsiMcpAllowanceExhaustedError` and never reaches here.
 
     * ``accepts`` — the payment options, each with scheme/network/asset/amount.
     * ``tool`` / ``price`` — which tool, and its price as a display string.
@@ -404,6 +410,63 @@ class HpsiMcpInsufficientCreditsError(HpsiMcpAPIError):
         self.credits_remaining = credits_remaining
         self.upgrade_url = safe_public_url(upgrade_url)
         self.register_url = safe_public_url(register_url)
+
+
+class HpsiMcpAllowanceExhaustedError(HpsiMcpAPIError):
+    """Raised when the free evaluation allowance is spent — HTTP 402 with
+    ``error: "anonymous_allowance_exhausted"``.
+
+    The third thing that arrives on 402, and the only one no amount of money
+    resolves. :class:`HpsiMcpPaymentError` carries an offer a wallet settles;
+    :class:`HpsiMcpInsufficientCreditsError` carries a balance that can be
+    topped up; this one is a volume ceiling on **unidentified** calling, and it
+    lifts when the caller says who it is. A wallet has nothing to sign here and
+    ``accepts`` is deliberately absent, which is exactly why this needs its own
+    class: before it existed, the refusal fell through to
+    :class:`HpsiMcpPaymentError` and told a caller who owed nothing to pay.
+
+    Not a :class:`HpsiMcpRateLimitError` either, for the same reason the API
+    refuses to answer 429 here: waiting is what fixes "too fast", and no amount
+    of it earns back an allowance.
+
+    * ``calls_used`` / ``calls_allowed`` / ``window_days`` — the ceiling, and
+      how far past it this caller is. Cached results count toward it.
+    * ``calls_allowed_next`` — the ceiling registering would raise it to. Absent
+      for a caller already on that rung.
+    * ``next_actions`` — the remedies, cheapest first, straight from the API.
+      For an unregistered caller the first is ``register_account``: a single
+      tool call taking an email, needing no browser and no human.
+    * ``register_url`` — the browser signup, for a human reading a log.
+    * ``verify_email_url`` — set instead of ``register_url`` when the caller has
+      an account whose email is unconfirmed; verifying is what moves it off
+      this ladder entirely.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        response_text: Optional[str] = None,
+        body: Optional[dict] = None,
+        calls_used: Optional[int] = None,
+        calls_allowed: Optional[int] = None,
+        calls_allowed_next: Optional[int] = None,
+        window_days: Optional[int] = None,
+        next_actions: Optional[list] = None,
+        register_url: Optional[str] = None,
+        verify_email_url: Optional[str] = None,
+    ) -> None:
+        super().__init__(message, status_code=status_code, response_text=response_text, body=body)
+        self.calls_used = calls_used
+        self.calls_allowed = calls_allowed
+        self.calls_allowed_next = calls_allowed_next
+        self.window_days = window_days
+        # Copied, not aliased: the caller must not be able to mutate the body
+        # that other handlers still read off this exception.
+        self.next_actions = deepcopy(next_actions) if isinstance(next_actions, list) else []
+        self.register_url = safe_public_url(register_url)
+        self.verify_email_url = safe_public_url(verify_email_url)
 
 
 class HpsiMcpResponseError(HpsiMcpAPIError):

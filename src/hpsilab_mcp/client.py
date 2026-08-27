@@ -17,6 +17,7 @@ from email_validator import EmailNotValidError, validate_email
 from . import __version__
 from .errors import (
     HpsiMcpAPIError,
+    HpsiMcpAllowanceExhaustedError,
     HpsiMcpAuthError,
     HpsiMcpConfigError,
     HpsiMcpConnectionError,
@@ -982,6 +983,31 @@ Fix:
             self._remember_insufficient_credits(error)
             raise error
 
+        # Ahead of the payment branch below, and for the same class of reason
+        # the Credits refusal is ahead of the breaker: this 402 is not an offer
+        # and must not be raised as one. Before it had its own branch it fell
+        # through, arriving as `HpsiMcpPaymentError` with `accepts` and `price`
+        # both None — a message telling a caller who owes nothing to configure
+        # a wallet, while the one action that works sat unread in
+        # `next_actions`.
+        if response.status_code == 402 and self._is_anonymous_allowance_exhausted(
+            response
+        ):
+            body = self._response_body(response)
+            raise HpsiMcpAllowanceExhaustedError(
+                message,
+                status_code=response.status_code,
+                response_text=response.text,
+                body=body,
+                calls_used=body.get("calls_used"),
+                calls_allowed=body.get("calls_allowed"),
+                calls_allowed_next=body.get("calls_allowed_next"),
+                window_days=body.get("window_days"),
+                next_actions=body.get("next_actions"),
+                register_url=body.get("register"),
+                verify_email_url=body.get("verify_email"),
+            )
+
         # A 402 that is not a Credits refusal is a payment offer, and it is
         # raised as one *before* the circuit breaker below can see it.
         #
@@ -1132,8 +1158,14 @@ Fix:
             # real api_key (construction requires one or the other — see
             # HpsiMcpClient.__init__): an already-registered account whose
             # quota this Pro tool / overage call exceeds, not an unidentified
-            # caller. There is nothing to "register" — the one lever left is
+            # caller. There is nothing to "register", and the one lever left is
             # paying per call.
+            #
+            # That last clause was briefly false. On 2026-08-27 the API added
+            # `anonymous_allowance_exhausted`, which a registered account with
+            # an unverified email can meet — its remedy is verifying, free, and
+            # neither of the two offered below. It no longer reaches here: it
+            # is raised as `HpsiMcpAllowanceExhaustedError` above.
             if price:
                 message = (
                     f"{message} Pay {price} per call by configuring "
@@ -1211,6 +1243,23 @@ Fix:
         if isinstance(accepts, list) and accepts:
             return False
         return body.get("error") == "insufficient_credits"
+
+    def _is_anonymous_allowance_exhausted(self, response: httpx.Response) -> bool:
+        """Whether this response is the spent free-evaluation allowance.
+
+        Read off the body for the same reason as above — 402 is shared by three
+        different refusals — and by `error` alone, with no `accepts` exclusion:
+        this one never carries an offer, because there is nothing to sell a
+        caller who has not said who it is.
+
+        Mirrors backend ``app.core.error_contract.is_anonymous_allowance_exhausted``
+        and ``mcp_server/errors.py::_is_anonymous_allowance_exhausted``. The
+        backend added this code on 2026-08-27 and the three clients did not
+        follow until 2026-08-28, during which every one of these refusals was
+        relayed to agents as a demand for payment.
+        """
+        body = self._response_body(response)
+        return body.get("error") == "anonymous_allowance_exhausted"
 
     @staticmethod
     def _retry_after_seconds(response: httpx.Response, body: dict) -> Optional[int]:
