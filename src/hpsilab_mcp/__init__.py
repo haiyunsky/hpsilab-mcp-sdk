@@ -30,6 +30,7 @@ __version__ = _load_version()
 from .client import HpsiMcpClient, register
 from .errors import (
     HpsiMcpAPIError,
+    HpsiMcpAllowanceExhaustedError,
     HpsiMcpAuthError,
     HpsiMcpConfigError,
     HpsiMcpConnectionError,
@@ -57,6 +58,7 @@ __all__ = [
     "PaymentPolicyError",
     "X402_FALLBACK",
     "HpsiMcpAPIError",
+    "HpsiMcpAllowanceExhaustedError",
     "HpsiMcpAuthError",
     "HpsiMcpClient",
     "HpsiMcpConfigError",

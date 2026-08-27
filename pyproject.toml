@@ -84,3 +84,16 @@ exclude = [
 #
 # So the sdist ships a 257-byte list of cache directories, and the wheel — the
 # artifact `pip install` actually uses — ships the package and nothing else.
+
+
+[tool.pytest.ini_options]
+# Without this, `pytest tests` imports whatever `hpsilab_mcp` is installed in
+# site-packages and the working tree is never exercised: on 2026-08-28 the
+# suite reported 202 passed against the published 0.13.16 while the local
+# source carried an unreleased change none of those tests could see. The
+# failure is silent in the worst way — green, and measuring the wrong artifact.
+#
+# `src` first, so an editable install, a stale wheel, or no install at all all
+# resolve to the code in this checkout. `test_release.py` deliberately reads
+# the built artifact instead and is unaffected.
+pythonpath = ["src"]
