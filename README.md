@@ -107,10 +107,9 @@ Use `GET /api/credits/catalog` for current tool prices and
 
 ### Errors and rate limits
 
-Catch `HpsiMcpError` for one common SDK error boundary. Specific subclasses
-include `HpsiMcpConfigError` for authentication,
-`HpsiMcpInsufficientCreditsError` for an empty balance, and
-`HpsiMcpRateLimitError` for rate limits.
+Catch `HpsiMcpError` — every failure this SDK raises derives from it, and the
+message says what to do. Reach for a specific subclass only when you want to
+handle one case differently; `hpsilab_mcp.__all__` lists them.
 
 ## Paying with x402 - paid per call
 
@@ -136,12 +135,6 @@ Credits at <https://hpsilab.com/pricing> instead.
 
 Payments are never made before the server presents an offer. Signing happens
 locally, and the private key never leaves your process.
-
-### Unresolved settlements
-
-A payment timeout may leave settlement status unknown. Do not retry that call.
-`HpsiMcpSettlementUnknownError` provides the `call_id`, `tool`, and
-`settlement_status` needed for reconciliation.
 
 Only tools included in the server's current x402 offer can be paid by wallet.
 Use the live offer or Credits catalog instead of hard-coding prices.
