@@ -78,6 +78,18 @@ def sanitize_sensitive_data(value: Any) -> Any:
     return deepcopy(value)
 
 
+# Paths the API is allowed to point a caller at, with trailing slashes ignored.
+# `""` is the site root, which is where the backend sends an unverified account
+# to resend its confirmation email (`verify_email` on the
+# `anonymous_allowance_exhausted` body). Leaving the root out silently dropped
+# the only remedy that case has: `verify_email_url` came back `None` for every
+# unverified caller, and consumers reading the attribute instead of the raw
+# body saw nothing to do. The root is the least dangerous path on an
+# already-pinned host, so admitting it costs nothing the other entries do not
+# already cost.
+_PUBLIC_URL_PATHS = frozenset({"", "/register", "/pricing"})
+
+
 def safe_public_url(value: Optional[str], *, fallback: Optional[str] = None) -> Optional[str]:
     """Allow only public HPSILab HTTPS URLs and discard query secrets."""
     if not value:
@@ -90,16 +102,22 @@ def safe_public_url(value: Optional[str], *, fallback: Optional[str] = None) -> 
         port = parsed.port
     except ValueError:
         return fallback
+    normalized_path = parsed.path.rstrip("/")
     if (
         parsed.scheme != "https"
         or parsed.hostname != "hpsilab.com"
         or parsed.username is not None
         or parsed.password is not None
         or port not in {None, 443}
-        or parsed.path.rstrip("/") not in {"/register", "/pricing"}
+        or normalized_path not in _PUBLIC_URL_PATHS
     ):
         return fallback
-    return urlunsplit(("https", "hpsilab.com", parsed.path, "", ""))
+    # Every spelling of the root ("", "/", "//") comes back as one browsable
+    # "https://hpsilab.com/" — `urlsplit("https://hpsilab.com").path` is empty,
+    # and a bare "//" path is the one form a consumer could misread as
+    # protocol-relative.
+    path = parsed.path if normalized_path else "/"
+    return urlunsplit(("https", "hpsilab.com", path, "", ""))
 
 
 class HpsiMcpError(Exception):

@@ -13,6 +13,15 @@
   `window_days`, `next_actions`, `register_url` and `verify_email_url`. For an
   unregistered caller the first entry of `next_actions` is a `register_account`
   call taking only an email — no browser, no human step.
+- `verify_email_url` carries the page an unverified account resends its
+  confirmation email from, which the API sends as the site root. The URL
+  allowlist that keeps these links pinned to public HPSILab pages therefore
+  accepts the root alongside `/register` and `/pricing`, normalized to a single
+  `https://hpsilab.com/` however it is spelled. Scheme, host, credential and
+  port checks are unchanged, and query strings and fragments are still
+  discarded, so a one-time token on a resend link never reaches a log. The same
+  widening applies to `register_url`, `pricing_url` and `upgrade_url` on the
+  auth, rate-limit and Credits errors.
 - The API added this refusal on 2026-08-27 and this client did not know it:
   `_is_insufficient_credits` keys on `insufficient_credits` alone, so the
   refusal fell through to the payment branch and arrived with `accepts` and

@@ -34,6 +34,18 @@ account its first entry is `register_account`, and for an account whose email
 is unverified it is `verify_email` instead, which is a distinction this client
 does not have to make itself.
 
+The same split is on the exception: `register_url` for a caller with no
+account, `verify_email_url` for one whose email is unconfirmed. The latter is
+the site root — the page that resends the confirmation email — which the URL
+allowlist accepts alongside `/register` and `/pricing`, with any query string
+or fragment stripped.
+
+```python
+except HpsiMcpAllowanceExhaustedError as exc:
+    if exc.verify_email_url:  # "https://hpsilab.com/"
+        print(f"Verify your email to continue: {exc.verify_email_url}")
+```
+
 ## v0.13.14: structured rate-limit upgrade guidance
 
 `HpsiMcpRateLimitError` now promotes the HTTP 429 fields
