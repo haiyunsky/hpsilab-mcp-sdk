@@ -175,7 +175,7 @@ tool calls.
 
 `call_tool(..., include_metadata=True)` returns
 `McpToolResult(data=..., metadata=...)`. The SDK generates `result_id`,
-`source_ids`, `upstream_ids`, `derived_from`, and `timestamp` locally; it never
+`source_ids`, `upstream_ids`, `derived_from`, and `timestamp` locally; it
 requires metadata from no external component. The default call remains
 unchanged.
 
