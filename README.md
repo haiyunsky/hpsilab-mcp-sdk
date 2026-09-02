@@ -201,6 +201,11 @@ This metadata is generated locally by the SDK. Without
 `include_metadata=True`, `call_tool` returns the adapter's original value
 unchanged.
 
+A result carrying MCP's `isError` flag raises `HpsiMcpToolError` on either
+path — that flag is how a tool that ran and failed says so, and it rides on an
+otherwise ordinary result, so returning it would hand back the failure text as
+business data.
+
 - `result_id` identifies the tool name, normalized arguments, and business
   output. Repeating the same visible call and output produces the same ID.
 - `source_ids` identifies the normalized SDK input set.

@@ -1,5 +1,63 @@
 # Upgrading hpsilab-mcp
 
+## v0.14.1: a failed MCP tool raises instead of returning
+
+Affects anyone calling `call_tool` with an MCP transport adapter.
+
+MCP reports two kinds of failure and only one of them was visible here. A call
+the server cannot route — unknown tool, malformed request — comes back as a
+JSON-RPC error and never reaches this SDK. A tool that *ran* and failed reports
+it inside an otherwise ordinary result, setting `isError` beside the content.
+That flag was never read, so the failure arrived shaped exactly like a success:
+the error text became the business value, and `include_metadata=True` generated
+a well-formed `McpDependencyMetadata` — deterministic IDs and all — for a call
+that produced nothing.
+
+`call_tool` now raises `HpsiMcpToolError` on both paths, including the default
+one: a failed call has no "adapter's original value" worth returning, because
+the content *is* the error text.
+
+```python
+from hpsilab_mcp import HpsiMcpToolError
+
+try:
+    result = client.call_tool("get_ai_prediction", ticker="NVDAA")
+except HpsiMcpToolError as exc:
+    # exc.message is what to hand back to the model so it can retry.
+    print(f"{exc.tool_name} failed: {exc.message}")
+```
+
+`HpsiMcpToolError` derives from `HpsiMcpError` directly, not from
+`HpsiMcpAPIError`: it arrives over whatever transport adapter you supplied, so
+there is no HTTP status behind it. `except HpsiMcpError` already catches it. A
+tool that sets the flag without saying why yields an empty `message` and still
+raises.
+
+Code that inspected the raw result itself keeps working by catching the error.
+Code that read the error text as data was already wrong.
+
+## v0.14.1: `verify_email_url` survives the URL allowlist
+
+Affects anyone handling `HpsiMcpAllowanceExhaustedError` for an account whose
+email is not yet verified.
+
+`verify_email_url` was always `None`. The API sends the site root as
+`verify_email` — the page that resends the confirmation email — and the
+allowlist that keeps these links pinned to public HPSILab pages admitted only
+`/register` and `/pricing`, so the value was discarded on the way onto the
+exception. Code that read the attribute saw nothing to offer; code that read
+`exc.body["verify_email"]` was unaffected, and any fallback written to reach
+around the attribute can be removed.
+
+```python
+except HpsiMcpAllowanceExhaustedError as exc:
+    if exc.verify_email_url:  # now "https://hpsilab.com/"
+        print(f"Verify your email to continue: {exc.verify_email_url}")
+```
+
+The allowlist is otherwise unchanged — same scheme, host, credential and port
+checks, and query strings and fragments are still stripped.
+
 ## v0.14.0: the free allowance is no longer a payment error
 
 Affects anyone calling without an API key, and any account whose email is not
@@ -35,16 +93,9 @@ is unverified it is `verify_email` instead, which is a distinction this client
 does not have to make itself.
 
 The same split is on the exception: `register_url` for a caller with no
-account, `verify_email_url` for one whose email is unconfirmed. The latter is
-the site root — the page that resends the confirmation email — which the URL
-allowlist accepts alongside `/register` and `/pricing`, with any query string
-or fragment stripped.
-
-```python
-except HpsiMcpAllowanceExhaustedError as exc:
-    if exc.verify_email_url:  # "https://hpsilab.com/"
-        print(f"Verify your email to continue: {exc.verify_email_url}")
-```
+account, `verify_email_url` for one whose email is unconfirmed. In 0.14.0 the
+latter is always `None` — the URL allowlist rejected the site root the API
+sends. See the v0.14.1 note above.
 
 ## v0.13.14: structured rate-limit upgrade guidance
 

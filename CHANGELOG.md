@@ -1,7 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.14.1 - 2026-09-02
 
+- `HpsiMcpAllowanceExhaustedError.verify_email_url` was `None` for every caller
+  it was written for. The API sends the site root as `verify_email` — the page
+  an unverified account resends its confirmation email from — and the URL
+  allowlist that keeps these links pinned to public HPSILab pages admitted only
+  `/register` and `/pricing`, so the constructor discarded the value and stored
+  the fallback. The allowlist now accepts the root, normalized to a single
+  `https://hpsilab.com/` however it is spelled. Scheme, host, credential and
+  port checks are unchanged, and query strings and fragments are still
+  discarded, so a one-time token on a resend link never reaches a log. The same
+  widening applies to `register_url`, `pricing_url` and `upgrade_url` on the
+  auth, rate-limit and Credits errors. The v0.14.0 notes below described this
+  behaviour before the fix shipped; it is released here.
 - **Breaking.** `call_tool` now raises the new `HpsiMcpToolError` when a result
   carries MCP's `isError` flag. It previously returned that result unexamined,
   so a tool that ran and failed came back looking like a success: the error
@@ -44,14 +56,9 @@
   unregistered caller the first entry of `next_actions` is a `register_account`
   call taking only an email — no browser, no human step.
 - `verify_email_url` carries the page an unverified account resends its
-  confirmation email from, which the API sends as the site root. The URL
-  allowlist that keeps these links pinned to public HPSILab pages therefore
-  accepts the root alongside `/register` and `/pricing`, normalized to a single
-  `https://hpsilab.com/` however it is spelled. Scheme, host, credential and
-  port checks are unchanged, and query strings and fragments are still
-  discarded, so a one-time token on a resend link never reaches a log. The same
-  widening applies to `register_url`, `pricing_url` and `upgrade_url` on the
-  auth, rate-limit and Credits errors.
+  confirmation email from, which the API sends as the site root. **This
+  attribute is `None` in 0.14.0** — the URL allowlist rejected the root, and the
+  fix shipped in v0.14.1 above.
 - The API added this refusal on 2026-08-27 and this client did not know it:
   `_is_insufficient_credits` keys on `insufficient_credits` alone, so the
   refusal fell through to the payment branch and arrived with `accepts` and
