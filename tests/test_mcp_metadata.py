@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import httpx
 
-from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError, McpToolResult
+from hpsilab_mcp import HpsiMcpClient, HpsiMcpConfigError, HpsiMcpToolError, McpToolResult
 
 
 def test_rest_prediction_can_include_sdk_metadata():
@@ -83,4 +83,69 @@ def test_call_tool_requires_an_explicit_transport_adapter():
     client = HpsiMcpClient()
     with pytest.raises(HpsiMcpConfigError, match="mcp_transport"):
         client.call_tool("get_ai_prediction", ticker="NVDA")
+    client.close()
+
+
+def test_a_tool_execution_error_is_raised_rather_than_returned_as_data():
+    """MCP puts a failed tool's own error text in `content` and sets `isError`
+    beside it, so the failure arrives shaped exactly like a success. Reading it
+    as business output is the whole hazard this flag exists to prevent."""
+    raw_result = {
+        "content": [{"type": "text", "text": "Invalid ticker: NVDAA"}],
+        "isError": True,
+    }
+    client = HpsiMcpClient(mcp_transport=lambda name, arguments: raw_result)
+    with pytest.raises(HpsiMcpToolError) as caught:
+        client.call_tool("get_ai_prediction", ticker="NVDAA", include_metadata=True)
+    assert caught.value.tool_name == "get_ai_prediction"
+    assert caught.value.message == "Invalid ticker: NVDAA"
+    client.close()
+
+
+def test_the_default_path_raises_too_so_no_caller_reads_a_failure_as_a_value():
+    """`include_metadata=False` documents the adapter's original value as the
+    return, but a failed call has no value: the content *is* the error text,
+    and returning it makes the failure indistinguishable from a string result.
+    With `include_metadata=True` the same result would additionally mint a
+    well-formed provenance record for a call that produced nothing."""
+    raw_result = {"content": [{"type": "text", "text": "upstream timeout"}], "isError": True}
+    client = HpsiMcpClient(mcp_transport=lambda name, arguments: raw_result)
+    with pytest.raises(HpsiMcpToolError, match="upstream timeout"):
+        client.call_tool("get_ai_prediction", ticker="NVDA")
+    client.close()
+
+
+def test_an_explicit_false_error_flag_is_still_a_success():
+    raw_result = {"structuredContent": {"symbol": "NVDA"}, "isError": False}
+    client = HpsiMcpClient(mcp_transport=lambda name, arguments: raw_result)
+    result = client.call_tool("get_ai_prediction", ticker="NVDA", include_metadata=True)
+    assert result.data == {"symbol": "NVDA"}
+    client.close()
+
+
+def test_a_tool_that_fails_without_saying_why_still_raises():
+    """`isError` carries the failure; the text is optional and the blocks need
+    not be text at all. Keying on the message would let the quietest failures
+    through as successes."""
+    raw_result = {
+        "content": [{"type": "image", "data": "AAAA", "mimeType": "image/png"}],
+        "isError": True,
+    }
+    client = HpsiMcpClient(mcp_transport=lambda name, arguments: raw_result)
+    with pytest.raises(HpsiMcpToolError) as caught:
+        client.call_tool("get_ai_prediction", ticker="NVDA")
+    assert caught.value.message == ""
+    client.close()
+
+
+def test_a_tool_error_message_is_redacted_like_every_other_error():
+    raw_result = {
+        "content": [{"type": "text", "text": "rejected key hpsi_live_abcdef123456"}],
+        "isError": True,
+    }
+    client = HpsiMcpClient(mcp_transport=lambda name, arguments: raw_result)
+    with pytest.raises(HpsiMcpToolError) as caught:
+        client.call_tool("get_ai_prediction", ticker="NVDA")
+    assert "hpsi_live_abcdef123456" not in str(caught.value)
+    assert "[REDACTED]" in caught.value.message
     client.close()

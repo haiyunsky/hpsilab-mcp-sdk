@@ -537,3 +537,37 @@ class HpsiMcpSettlementUnknownError(HpsiMcpError):
         self.status_code = status_code
         self.response_text = sanitize_response_text(response_text)
         self.body = sanitize_sensitive_data(body or {})
+
+
+class HpsiMcpToolError(HpsiMcpError):
+    """Raised when an MCP tool ran and reported its own failure.
+
+    MCP splits failures in two, and only one of them is a protocol error. A
+    call the server cannot route — unknown tool, malformed request — comes back
+    as a JSON-RPC error. A tool that *ran* and failed — a rejected argument, an
+    upstream outage, a business rule — reports it inside an otherwise ordinary
+    result, with ``isError`` set beside the content. The failure therefore
+    arrives looking exactly like a success, and a client that does not read the
+    flag hands the caller the error text as if it were business data.
+
+    Deliberately **not** a subclass of :class:`HpsiMcpAPIError`. That class
+    means "the hpsilab.com REST API answered with an error" and carries a
+    ``status_code``; this one can arrive over whatever transport adapter the
+    caller supplied — the SDK does not implement MCP transport — and has no
+    HTTP status behind it to report.
+
+    * ``tool_name`` — the tool that failed.
+    * ``message`` — the tool's own text, joined from the result's text content
+      blocks and redacted like every other message in this module. Empty when
+      the tool set ``isError`` without saying why.
+
+    The MCP specification asks clients to pass tool execution errors back to
+    the model so it can correct itself and retry; ``message`` is what to pass.
+    """
+
+    def __init__(self, tool_name: str, message: str) -> None:
+        redacted = redact_sensitive_text(message)
+        detail = f": {redacted}" if redacted else "."
+        super().__init__(f"MCP tool {tool_name!r} failed{detail}")
+        self.tool_name = tool_name
+        self.message = redacted

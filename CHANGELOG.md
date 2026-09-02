@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking.** `call_tool` now raises the new `HpsiMcpToolError` when a result
+  carries MCP's `isError` flag. It previously returned that result unexamined,
+  so a tool that ran and failed came back looking like a success: the error
+  text arrived as the business value, and `include_metadata=True` additionally
+  generated a well-formed `McpDependencyMetadata` — deterministic IDs and all —
+  describing a call that produced no output. A provenance record behind a
+  failure is worse than none, because nothing downstream can tell it apart from
+  a real one.
+- MCP splits failures in two, and only one of them was ever visible here. A
+  call the server cannot route — unknown tool, malformed request — comes back
+  as a JSON-RPC error and never reaches this SDK; that is the transport
+  adapter's business. A tool that *ran* and failed reports it inside an
+  otherwise ordinary result. `isError` did not appear anywhere in `src/`,
+  because the result handling was written around `content` and
+  `structuredContent` alone.
+- `HpsiMcpToolError` derives from `HpsiMcpError` directly rather than from
+  `HpsiMcpAPIError`. The latter means the hpsilab.com REST API answered with an
+  error and carries a `status_code`; this one arrives over whatever transport
+  adapter the caller supplied, and there is no HTTP status behind it. It
+  carries `tool_name` and `message`, the message joined from the result's text
+  blocks and redacted like every other message in `errors.py`. A tool that sets
+  the flag without saying why yields an empty `message` and still raises —
+  keying on the text would let the quietest failures through.
+- Added `tool_error_message()` to `hpsilab_mcp.mcp_result`, beside
+  `data_from_result()`, for callers driving `full_tool_result()` themselves. It
+  returns `None` for a success and `""` for a failure with no text, so callers
+  test `is not None` rather than truthiness.
+
 ## v0.14.0 - 2026-08-28
 
 - **Breaking.** A 402 carrying `error: "anonymous_allowance_exhausted"` now

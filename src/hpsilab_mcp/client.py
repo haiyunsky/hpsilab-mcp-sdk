@@ -27,12 +27,13 @@ from .errors import (
     HpsiMcpResponseError,
     HpsiMcpSettlementUnknownError,
     HpsiMcpTimeoutError,
+    HpsiMcpToolError,
     HpsiMcpValidationError,
     redact_sensitive_text,
     safe_public_url,
 )
 from .payments import X402Wallet, wallet_from_env
-from .mcp_result import McpToolResult, full_tool_result, sdk_dependency_metadata
+from .mcp_result import McpToolResult, full_tool_result, sdk_dependency_metadata, tool_error_message
 from .policy import (
     CREDITS_ONLY,
     X402_FALLBACK,
@@ -270,6 +271,13 @@ class HpsiMcpClient:
         The default return is the adapter's original value. Set
         ``include_metadata=True`` to get an :class:`McpToolResult` whose
         dependency metadata is generated locally by this SDK.
+
+        A result carrying MCP's ``isError`` flag raises
+        :class:`HpsiMcpToolError` on either path. The flag is how a tool that
+        ran and failed says so, and it rides on an otherwise ordinary result —
+        returning it unexamined would hand back the failure text as business
+        data, and, with ``include_metadata=True``, mint dependency metadata
+        describing a call that produced nothing.
         """
         if not name:
             raise ValueError("Tool name is required.")
@@ -284,6 +292,9 @@ class HpsiMcpClient:
             raise ValueError(f"Duplicate MCP tool arguments: {names}")
         merged.update(tool_arguments)
         raw_result = self._mcp_transport(name, merged)
+        tool_error = tool_error_message(raw_result)
+        if tool_error is not None:
+            raise HpsiMcpToolError(name, tool_error)
         return full_tool_result(name, merged, raw_result) if include_metadata else raw_result
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostic safety

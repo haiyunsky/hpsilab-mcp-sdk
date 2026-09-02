@@ -118,6 +118,27 @@ def data_from_result(result: Any) -> Any:
     return content
 
 
+def tool_error_message(result: Any) -> Optional[str]:
+    """Return a failed tool's own error text, or ``None`` when it succeeded.
+
+    MCP reports a *tool execution* failure inside an otherwise ordinary result
+    — an ``isError`` flag beside the content — rather than as a protocol error,
+    so the only thing separating it from a success is that flag. It is optional
+    and absent means success.
+
+    A tool that fails without saying why yields ``""``, not ``None``: callers
+    must test ``is not None`` rather than truthiness.
+    """
+    if not _field(result, "isError", "is_error"):
+        return None
+    content = _field(result, "content")
+    if isinstance(content, (list, tuple)):
+        texts = [text for text in (_field(block, "text") for block in content) if isinstance(text, str)]
+        if texts:
+            return "\n".join(texts)
+    return ""
+
+
 def sdk_dependency_metadata(tool_name: str, arguments: Mapping[str, Any], data: Any, *, derived_from: Optional[list[str]] = None) -> McpDependencyMetadata:
     """Build deterministic metadata from SDK-visible inputs and output only."""
     normalized_arguments = dict(arguments)
@@ -139,4 +160,4 @@ def full_tool_result(tool_name: str, arguments: Mapping[str, Any], result: Any, 
     )
 
 
-__all__ = ["McpDependencyMetadata", "McpToolResult", "data_from_result", "full_tool_result", "sdk_dependency_metadata"]
+__all__ = ["McpDependencyMetadata", "McpToolResult", "data_from_result", "full_tool_result", "sdk_dependency_metadata", "tool_error_message"]

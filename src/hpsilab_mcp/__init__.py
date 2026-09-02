@@ -41,6 +41,7 @@ from .errors import (
     HpsiMcpResponseError,
     HpsiMcpSettlementUnknownError,
     HpsiMcpTimeoutError,
+    HpsiMcpToolError,
     HpsiMcpValidationError,
 )
 from .payments import X402Wallet
@@ -70,6 +71,7 @@ __all__ = [
     "HpsiMcpResponseError",
     "HpsiMcpSettlementUnknownError",
     "HpsiMcpTimeoutError",
+    "HpsiMcpToolError",
     "HpsiMcpValidationError",
     "McpDependencyMetadata",
     "McpToolResult",
